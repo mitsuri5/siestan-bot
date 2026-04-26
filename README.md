@@ -12,6 +12,7 @@ Discord で `!ping` と送ると、Bot が次のように返信します。
 
 - Node.js
 - Discord Bot の Token
+- Nansen CLI
 
 ## セットアップ
 
@@ -28,6 +29,13 @@ DISCORD_BOT_TOKEN=ここに本物のBot Tokenを入れる
 ```
 
 本物の Token はコードや README に書かないでください。
+
+Nansen CLI を使う場合は、別途 Nansen CLI をインストールしてログインしてください。
+
+```bash
+npm install -g nansen-cli
+nansen --version
+```
 
 ## Discord Developer Portal 側の設定
 
@@ -63,3 +71,4 @@ Discord のチャンネルで `!ping` と送って、返信が返るか確認し
 | `!help` | 使えるコマンド一覧を Discord の Embed で表示します。 |
 | `!about` | しえすたんが、Nansen のオンチェーンデータを使ってアルトや Smart Money の動きを見守る Bot であることを説明します。 |
 | `!sleep` | 「むにゃ... 監視はしえすたんに任せて、お昼寝してていいですにゃ。」と返信します。 |
+| `!nansen-test` | Node.js から Nansen CLI の `nansen --version` を実行し、接続できているかを Embed で表示します。 |

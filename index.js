@@ -1,7 +1,10 @@
 require("dotenv").config();
 
-const { Client, EmbedBuilder, GatewayIntentBits } = require("discord.js");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
 
+const execFileAsync = promisify(execFile);
 const token = process.env.DISCORD_BOT_TOKEN;
 
 if (!token) {
@@ -17,11 +20,34 @@ const client = new Client({
   ]
 });
 
-client.once("ready", () => {
-  console.log(`Logged in as ${client.user.tag}`);
+function getNansenVersionCommand() {
+  if (process.platform === "win32") {
+    return {
+      file: "cmd.exe",
+      args: ["/d", "/s", "/c", "nansen --version"]
+    };
+  }
+
+  return {
+    file: "nansen",
+    args: ["--version"]
+  };
+}
+
+async function getNansenVersion() {
+  const { file, args } = getNansenVersionCommand();
+  const { stdout } = await execFileAsync(file, args, {
+    windowsHide: true
+  });
+
+  return stdout.trim();
+}
+
+client.once(Events.ClientReady, (readyClient) => {
+  console.log(`Logged in as ${readyClient.user.tag}`);
 });
 
-client.on("messageCreate", async (message) => {
+client.on(Events.MessageCreate, async (message) => {
   if (message.author.bot) {
     return;
   }
@@ -40,7 +66,8 @@ client.on("messageCreate", async (message) => {
         { name: "!ping", value: "Bot が起動中か確認します。" },
         { name: "!help", value: "使えるコマンド一覧を表示します。" },
         { name: "!about", value: "しえすたんについて説明します。" },
-        { name: "!sleep", value: "お昼寝したいときのひとことを返します。" }
+        { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
+        { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" }
       );
 
     await message.reply({ embeds: [helpEmbed] });
@@ -63,6 +90,23 @@ client.on("messageCreate", async (message) => {
     await message.reply(
       "むにゃ... 監視はしえすたんに任せて、お昼寝してていいですにゃ。"
     );
+    return;
+  }
+
+  if (message.content === "!nansen-test") {
+    try {
+      const version = await getNansenVersion();
+      const nansenEmbed = new EmbedBuilder()
+        .setColor(0x7bd88f)
+        .setTitle("Nansen CLI 接続確認")
+        .setDescription("しえすたん、Nansen CLIに接続できていますにゃ。")
+        .addFields({ name: "Version", value: version || "unknown" });
+
+      await message.reply({ embeds: [nansenEmbed] });
+    } catch (error) {
+      console.error("Failed to check Nansen CLI connection:", error);
+      await message.reply("Nansen CLIの接続確認に失敗しましたにゃ。");
+    }
   }
 });
 
