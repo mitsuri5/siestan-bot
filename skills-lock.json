@@ -1,0 +1,165 @@
+{
+  "version": 1,
+  "skills": {
+    "nansen-agent-guide": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "b2a4c0f3a45364ed21438dbb127530ec24a5733b9369a0acc46476175ea5fbab"
+    },
+    "nansen-alerts-webhook-listener": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "ca4c2883ccb91da7fe143d33d0a252b423b8b73ec1ce08a0eef68ce5c61a03a3"
+    },
+    "nansen-dca-tracker": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "dc9cd97c86d810d49c34e5e743f9ada993571ec3e73fbb03389f256e9a7f9bbf"
+    },
+    "nansen-defi-positions": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "e1c52281deb6500d4c2e049cb5daea9c3803a29f4442792bb884bb872b68a35f"
+    },
+    "nansen-exit-signals": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "67d32848db195caa98b57e6d1e415fd9596ef4081b9d2e5df9cc426ec373ff20"
+    },
+    "nansen-fund-tracker": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "637a151e8662c7e60c2a08c48378cfad531f9a5e8e6ffe16e46dbf046f04efc9"
+    },
+    "nansen-general-search": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "707906027170ac0362c3fda41ea0c1167b3a0ee177b2b8895dea1959a4f19c2b"
+    },
+    "nansen-holder-analysis": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "d74841f159f9d1d38a1aa1b12a1b32fe613abf399ee57171b54db48e18438d9d"
+    },
+    "nansen-perp-screener": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "df8fb3a14add5e7a092025be1e4ab558c74ed50cc8d2dcc9ba0653626213759a"
+    },
+    "nansen-perp-trader-profile": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "fa160192952a842224b9a5ef73de21e98d12cc870d9a7a0679e6c49e6f182656"
+    },
+    "nansen-polymarket-deep-dive": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "695285f94ae84acfad09a651f47bc941345d600f8c5c5995a9c2a92f9a68edd0"
+    },
+    "nansen-polymarket-insider-scan": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "b3fd93808c7572c4cc4c0384328223e514d3af90806a4652f4433b3e29d0f106"
+    },
+    "nansen-polymarket-trader-profile": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "835988d3b44d61eefc37163568c23f4f85c961d9ef7d142119c03f5ca6932ca1"
+    },
+    "nansen-portfolio-tracker": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "79c2996a2fb2dc5d3acdb9dd2fcd5e0cff3d2695b369636d509220eee4176159"
+    },
+    "nansen-prediction-markets": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "d9916705f5d187a2020a1679beb44e64abd204728eda72f35588fa4b1218495c"
+    },
+    "nansen-sm-cross-chain-flows": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "5d2ff94fb47a7f16f6a0ae0a1f6c96af9c1d06d3a05256b74c750d8a52c07548"
+    },
+    "nansen-smart-alerts": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "1d1bf939eb783b40a61b1bf6d08667c1919faeb12e8035aee1bfb239ae661b4a"
+    },
+    "nansen-smart-money-alpha": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "7b4f9411bc8f9b8bc88be6415fdf087ecc89f8045f8fb0225f726b61825b0cb5"
+    },
+    "nansen-smart-money-tracker": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "68ad44fa095d5adafecd6171288b5ec1e3fa6938a0d7fa94c985e47bf634af25"
+    },
+    "nansen-smart-money-trend": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "26448569f8cc3218d7a3e281e136c6f393aec4560b09cb5826134dd194884395"
+    },
+    "nansen-token-research": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "3b9053354f12256c874d82efb9a506935489726b2ea4e50e35083cf8a9453593"
+    },
+    "nansen-token-screener": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "1cefbf91e3ef214516049382b51c71de082d8d1d04e0d7ee69819bfd3bc0b116"
+    },
+    "nansen-token-transfer-analysis": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "d3a699075370c2b4d73dd456b2958868a8626dd660806fe19e8e3b075237bd1c"
+    },
+    "nansen-trading": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "af144490e14d1718aa947ac55605d835658961c963416cdfc9c2f131c9da8539"
+    },
+    "nansen-wallet-batch": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "c4a55989eee7a6df0a0a174e391e1269b67b3774fa3e92ba7f9a8c7eba121b70"
+    },
+    "nansen-wallet-clustering": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "101cd6290b4d700a92a1dfc41eb54d5255d1713e8670d57b7daf8c09aa47f144"
+    },
+    "nansen-wallet-deep-dive": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "617e1a383cd63d64746bb95c6c11247a713dc113df3fe138260f7d0415915f3f"
+    },
+    "nansen-wallet-keychain-migration": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "ba1b0c6f574fc2b82c8d89b50a30acca4e0c91f557e58fc002356749fdf50e88"
+    },
+    "nansen-wallet-manager": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "fa5615372d319f80a65c226c9c8a8f4a1134ae5ec1f867cb9b44de36b1dc50c4"
+    },
+    "nansen-wallet-profiler": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "cbfbca17484be3cc791562d62d8af6828add3385f816504fcd86eadd34fd6894"
+    },
+    "nansen-web-fetcher": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "8d24be3fb8e59bedc7effe1bcd28adfd160b5393be92d75882a42962e8a6b7fe"
+    },
+    "nansen-web-searcher": {
+      "source": "nansen-ai/nansen-cli",
+      "sourceType": "github",
+      "computedHash": "e894f7d2d2583c25b0e5d5866ed4dfbd1e9d1f8895ded7b3cb263fa22beabaef"
+    }
+  }
+}
