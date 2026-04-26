@@ -72,3 +72,10 @@ Discord のチャンネルで `!ping` と送って、返信が返るか確認し
 | `!about` | しえすたんが、Nansen のオンチェーンデータを使ってアルトや Smart Money の動きを見守る Bot であることを説明します。 |
 | `!sleep` | 「むにゃ... 監視はしえすたんに任せて、お昼寝してていいですにゃ。」と返信します。 |
 | `!nansen-test` | Node.js から Nansen CLI の `nansen --version` を実行し、接続できているかを Embed で表示します。 |
+| `!scan solana` | Nansen CLI の Smart Money netflow を使って、Solana 上の流入候補をスキャンし、簡易スコア付きで上位3件を表示します。投資助言ではありません。 |
+
+## スキャン結果の保存
+
+`!scan solana` の結果は `data/signals.json` に保存されます。
+
+`data/signals.json` はローカルの実行結果なので Git にはコミットしません。`data/.gitkeep` だけを置いて、`data` フォルダ自体は Git 管理できるようにしています。

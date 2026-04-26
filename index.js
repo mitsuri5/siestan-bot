@@ -1,10 +1,11 @@
 require("dotenv").config();
 
-const { execFile } = require("child_process");
-const { promisify } = require("util");
 const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
+const { createEarlySignalEmbed } = require("./src/formatters");
+const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
+const { scoreTokens } = require("./src/scoring");
+const { saveScanResult } = require("./src/storage");
 
-const execFileAsync = promisify(execFile);
 const token = process.env.DISCORD_BOT_TOKEN;
 
 if (!token) {
@@ -19,29 +20,6 @@ const client = new Client({
     GatewayIntentBits.MessageContent
   ]
 });
-
-function getNansenVersionCommand() {
-  if (process.platform === "win32") {
-    return {
-      file: "cmd.exe",
-      args: ["/d", "/s", "/c", "nansen --version"]
-    };
-  }
-
-  return {
-    file: "nansen",
-    args: ["--version"]
-  };
-}
-
-async function getNansenVersion() {
-  const { file, args } = getNansenVersionCommand();
-  const { stdout } = await execFileAsync(file, args, {
-    windowsHide: true
-  });
-
-  return stdout.trim();
-}
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
@@ -67,7 +45,8 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!help", value: "使えるコマンド一覧を表示します。" },
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
-        { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" }
+        { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
+        { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" }
       );
 
     await message.reply({ embeds: [helpEmbed] });
@@ -106,6 +85,29 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to check Nansen CLI connection:", error);
       await message.reply("Nansen CLIの接続確認に失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (message.content === "!scan solana") {
+    const reply = await message.reply("SolanaのSmart Money流入候補をスキャン中ですにゃ...");
+
+    try {
+      const tokens = await getSolanaSmartMoneyNetflow();
+      const signals = scoreTokens(tokens);
+
+      await saveScanResult({
+        chain: "solana",
+        signals
+      });
+
+      await reply.edit({
+        content: "",
+        embeds: [createEarlySignalEmbed(signals)]
+      });
+    } catch (error) {
+      console.error("Failed to scan Solana Smart Money netflow:", error);
+      await reply.edit("SolanaのSmart Moneyスキャンに失敗しましたにゃ。");
     }
   }
 });
