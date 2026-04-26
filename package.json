@@ -1,0 +1,16 @@
+{
+  "name": "siestan-bot",
+  "version": "1.0.0",
+  "description": "A minimal Discord bot using discord.js.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  }
+}
