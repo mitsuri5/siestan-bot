@@ -1,7 +1,8 @@
 require("dotenv").config();
 
 const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
-const { createEarlySignalEmbed } = require("./src/formatters");
+const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnalysis");
+const { createDeepAnalysisEmbed, createEarlySignalEmbed } = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
 const { scoreTokens } = require("./src/scoring");
 const { saveScanResult } = require("./src/storage");
@@ -30,6 +31,8 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  const parts = message.content.trim().split(/\s+/);
+
   if (message.content === "!ping") {
     await message.reply("しえすたん起動中ですにゃ。Pong!");
     return;
@@ -46,7 +49,8 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
-        { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" }
+        { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
+        { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
 
     await message.reply({ embeds: [helpEmbed] });
@@ -108,6 +112,33 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to scan Solana Smart Money netflow:", error);
       await reply.edit("SolanaのSmart Moneyスキャンに失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (parts[0] === "!deep") {
+    if (parts[1] !== "solana" || !parts[2] || parts.length !== 3) {
+      await message.reply("使い方: `!deep solana TOKEN_ADDRESS`");
+      return;
+    }
+
+    const tokenAddress = parts[2];
+    if (!isValidSolanaAddress(tokenAddress)) {
+      await message.reply("Solanaのトークンアドレス形式を確認してくださいにゃ。");
+      return;
+    }
+
+    const reply = await message.reply("候補トークンを深掘り分析中ですにゃ...");
+
+    try {
+      const analysis = await analyzeSolanaTokenDeep(tokenAddress);
+      await reply.edit({
+        content: "",
+        embeds: [createDeepAnalysisEmbed(analysis)]
+      });
+    } catch (error) {
+      console.error("Failed to run deep Solana token analysis:", error);
+      await reply.edit("深掘り分析に失敗しましたにゃ。");
     }
   }
 });
