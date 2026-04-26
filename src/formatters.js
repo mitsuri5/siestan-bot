@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require("discord.js");
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } = require("discord.js");
 
 const NO_DATA = "取得なし";
 const NO_WARNINGS = "大きな注意点なし";
@@ -105,6 +105,22 @@ function formatConfidence(confidence) {
   return labels[confidence] || NO_DATA;
 }
 
+function getDiscoveryButtonLabel(discovery, index) {
+  const symbolOrAddress = discovery.symbol || shortenAddress(discovery.address);
+  return `${index + 1}位 ${symbolOrAddress}`.slice(0, 80);
+}
+
+function createDiscoveryComponents(discoveries) {
+  return discoveries.slice(0, 3).map((discovery, index) =>
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deep:solana:${discovery.address}`)
+        .setLabel(getDiscoveryButtonLabel(discovery, index))
+        .setStyle(ButtonStyle.Primary)
+    )
+  );
+}
+
 function createDiscoveryEmbed(discoveries) {
   const embed = new EmbedBuilder()
     .setColor(0x6ec6ff)
@@ -143,6 +159,7 @@ function createDiscoveryEmbed(discoveries) {
           `流動性: **${formatUsd(discovery.liquidityUsd)}**`,
           `Holders: **${formatNumber(discovery.holderCount)}**`,
           `Address: ${shortenAddress(discovery.address)}`,
+          `チャート: [Dexscreener](https://dexscreener.com/solana/${discovery.address})`,
           "",
           "**しえすたんメモ**",
           notes,
@@ -224,6 +241,7 @@ function createDeepAnalysisEmbed(analysis) {
             `シンボル: ${symbol}`,
             `アドレス: ${analysis.tokenAddress}`,
             `チェーン: ${analysis.chain}`,
+            `チャート: [Dexscreener](https://dexscreener.com/solana/${analysis.tokenAddress})`,
             `時価総額: ${formatUsd(tokenInfo.marketCapUsd || netflow.market_cap_usd)}`,
             `流動性: ${formatUsd(tokenInfo.liquidityUsd)}`,
             `ホルダー数: ${formatNumber(tokenInfo.holderCount)}`
@@ -310,6 +328,7 @@ function createDeepAnalysisEmbed(analysis) {
 
 module.exports = {
   createDeepAnalysisEmbed,
+  createDiscoveryComponents,
   createDiscoveryEmbed,
   createEarlySignalEmbed
 };

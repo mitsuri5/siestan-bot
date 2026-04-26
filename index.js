@@ -5,6 +5,7 @@ const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnal
 const { discoverSolanaCandidates } = require("./src/discovery");
 const {
   createDeepAnalysisEmbed,
+  createDiscoveryComponents,
   createDiscoveryEmbed,
   createEarlySignalEmbed
 } = require("./src/formatters");
@@ -29,6 +30,34 @@ const client = new Client({
 
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+});
+
+client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isButton()) {
+    return;
+  }
+
+  const [action, chain, tokenAddress] = interaction.customId.split(":");
+
+  if (action !== "deep" || chain !== "solana" || !isValidSolanaAddress(tokenAddress)) {
+    await interaction.reply({
+      content: "このボタンの内容を確認できませんでしたにゃ。",
+      ephemeral: true
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+
+  try {
+    const analysis = await analyzeSolanaTokenDeep(tokenAddress);
+    await interaction.editReply({
+      embeds: [createDeepAnalysisEmbed(analysis)]
+    });
+  } catch (error) {
+    console.error("Failed to run deep Solana token analysis from button:", error);
+    await interaction.editReply("深掘り分析に失敗しましたにゃ。");
+  }
 });
 
 client.on(Events.MessageCreate, async (message) => {
@@ -111,6 +140,7 @@ client.on(Events.MessageCreate, async (message) => {
       });
 
       await reply.edit({
+        components: createDiscoveryComponents(discoveries),
         content: "",
         embeds: [createDiscoveryEmbed(discoveries)]
       });
