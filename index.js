@@ -2,10 +2,15 @@ require("dotenv").config();
 
 const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
 const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnalysis");
-const { createDeepAnalysisEmbed, createEarlySignalEmbed } = require("./src/formatters");
+const { discoverSolanaCandidates } = require("./src/discovery");
+const {
+  createDeepAnalysisEmbed,
+  createDiscoveryEmbed,
+  createEarlySignalEmbed
+} = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
 const { scoreTokens } = require("./src/scoring");
-const { saveScanResult } = require("./src/storage");
+const { saveDiscoveryResult, saveScanResult } = require("./src/storage");
 
 const token = process.env.DISCORD_BOT_TOKEN;
 
@@ -49,6 +54,7 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
+        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -89,6 +95,28 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to check Nansen CLI connection:", error);
       await message.reply("Nansen CLIの接続確認に失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (message.content === "!discover solana") {
+    const reply = await message.reply("SolanaのG0 Discoveryを実行中ですにゃ...");
+
+    try {
+      const discoveries = await discoverSolanaCandidates();
+
+      await saveDiscoveryResult({
+        chain: "solana",
+        discoveries
+      });
+
+      await reply.edit({
+        content: "",
+        embeds: [createDiscoveryEmbed(discoveries)]
+      });
+    } catch (error) {
+      console.error("Failed to run Solana discovery:", error);
+      await reply.edit("SolanaのG0 Discoveryに失敗しましたにゃ。");
     }
     return;
   }

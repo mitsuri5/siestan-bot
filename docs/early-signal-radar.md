@@ -11,6 +11,7 @@
 ## MVP機能
 
 - 手動コマンドでNansen CLIの接続確認を行う
+- `!discover solana` でSmart Money DEX Tradesから候補トークンを発見する
 - 手動コマンドでSmart Money関連データを取得する
 - 取得結果をDiscord Embedで表示する
 - `!deep solana TOKEN_ADDRESS` で候補トークンを追加データで深掘りする
@@ -34,6 +35,17 @@
 定期実行は、最初はNode.jsプロセス内のスケジューラで十分。運用が重くなったら、外部cron、GitHub Actions、VPSのsystemd timer、キュー付きワーカー構成を検討する。
 
 ## 4-Gate設計
+
+### Gate 0: Discovery
+
+Smart Money DEX Tradesを使って、直近でSmart Moneyが触っているトークン候補を発見する。
+
+- token_bought_addressを中心に買われたトークン候補を抽出する
+- token_sold_addressも集計し、買い優勢か売り優勢かを見る
+- 同じトークンを重複排除し、買い件数、売り件数、買い金額、売り金額を保存する
+- token infoで時価総額、流動性、ホルダー数を補完する
+- 低MCAP、一定の流動性、買い優勢の候補を次の調査対象にする
+- ここで出た候補は売買推奨ではなく、Early Signal Radarに渡す調査候補として扱う
 
 ### Gate 1: Smart Money Flow
 
@@ -123,6 +135,7 @@ Smart Moneyの流入が一定以上あるかを確認する。
 ## APIクレジット節約方針
 
 - 4時間スキャンでは最初に軽いデータだけ取得する
+- G0 DiscoveryではSmart Money DEX Tradesを起点にし、token info補完は上位候補に限定する
 - Gateを通過した候補にだけ追加の詳細取得を行う
 - 手動のDeep分析では、Flow Intelligence、Token Holders、DEX Tradesを必要な時だけ取得する
 - 同じトークンやウォレットの結果は一定時間キャッシュする

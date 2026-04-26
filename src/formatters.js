@@ -18,9 +18,34 @@ function formatUsd(value) {
   }).format(number);
 }
 
+function formatTradeUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return NO_DATA;
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
+    style: "currency"
+  }).format(number);
+}
+
 function formatNumber(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number === 0) {
+    return NO_DATA;
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 0
+  }).format(number);
+}
+
+function formatTradeCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
     return NO_DATA;
   }
 
@@ -49,6 +74,14 @@ function formatList(items, fallback = NO_DATA) {
   return items.slice(0, 3).join(", ");
 }
 
+function shortenAddress(address) {
+  if (!address || address.length <= 14) {
+    return address || NO_DATA;
+  }
+
+  return `${address.slice(0, 6)}...${address.slice(-6)}`;
+}
+
 function truncate(value, maxLength = 1000) {
   if (value.length <= maxLength) {
     return value;
@@ -70,6 +103,62 @@ function formatConfidence(confidence) {
   };
 
   return labels[confidence] || NO_DATA;
+}
+
+function createDiscoveryEmbed(discoveries) {
+  const embed = new EmbedBuilder()
+    .setColor(0x6ec6ff)
+    .setTitle("しえすたん G0 Discovery")
+    .setDescription(
+      "Smart Money DEX Tradesから見つけたEarly Signal Radarの候補ですにゃ。投資助言ではないにゃ。"
+    )
+    .setTimestamp(new Date());
+
+  if (discoveries.length === 0) {
+    embed.addFields({
+      name: "候補なし",
+      value: "買いが確認できる候補は見つかりませんでしたにゃ。"
+    });
+    return embed;
+  }
+
+  for (const discovery of discoveries.slice(0, 3)) {
+    const symbol = discovery.symbol || UNKNOWN_SYMBOL;
+    const notes = formatList(discovery.notes);
+    const warnings = formatList(discovery.warnings, NO_WARNINGS);
+
+    embed.addFields({
+      name: "━━━━━━━━━━━━━━━━━━━━",
+      value: truncate(
+        [
+          `**${symbol}**`,
+          `Score **${discovery.score}/100**｜Confidence **${formatConfidence(discovery.confidence)}**`,
+          "",
+          "**売買**",
+          `買い: **${formatTradeUsd(discovery.buyValueUsd)}**｜売り: **${formatTradeUsd(discovery.sellValueUsd)}**`,
+          `買い件数: ${formatTradeCount(discovery.buyCount)}｜売り件数: ${formatTradeCount(discovery.sellCount)}`,
+          "",
+          "**基本情報**",
+          `MCAP: **${formatUsd(discovery.marketCapUsd)}**`,
+          `流動性: **${formatUsd(discovery.liquidityUsd)}**`,
+          `Holders: **${formatNumber(discovery.holderCount)}**`,
+          `Address: ${shortenAddress(discovery.address)}`,
+          "",
+          "**しえすたんメモ**",
+          notes,
+          "",
+          "⚠️ **注意点**",
+          warnings,
+          "",
+          "**深掘り**",
+          `\`!deep solana ${discovery.address}\``
+        ].join("\n"),
+        1024
+      )
+    });
+  }
+
+  return embed;
 }
 
 function createEarlySignalEmbed(signals) {
@@ -221,5 +310,6 @@ function createDeepAnalysisEmbed(analysis) {
 
 module.exports = {
   createDeepAnalysisEmbed,
+  createDiscoveryEmbed,
   createEarlySignalEmbed
 };

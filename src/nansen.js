@@ -76,6 +76,18 @@ async function getSolanaSmartMoneyNetflow() {
   return extractRows(parsed);
 }
 
+async function getSolanaSmartMoneyDexTrades() {
+  const parsed = await runNansenJson([
+    "research",
+    "smart-money",
+    "dex-trades",
+    "--chain",
+    "solana"
+  ]);
+
+  return extractRows(parsed);
+}
+
 async function getTokenFlowIntelligence({ chain, token }) {
   const parsed = await runNansenJson([
     "research",
@@ -140,6 +152,7 @@ async function getTokenDexTrades({ chain, token }) {
 
 module.exports = {
   getNansenVersion,
+  getSolanaSmartMoneyDexTrades,
   getSolanaSmartMoneyNetflow,
   getTokenFlowIntelligence,
   getTokenHolders,
