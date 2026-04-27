@@ -54,6 +54,15 @@ function formatTradeCount(value) {
   }).format(number);
 }
 
+function formatDuration(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return NO_DATA;
+  }
+
+  return `${(number / 1000).toFixed(1)}秒`;
+}
+
 function formatPercent(value) {
   const number = Number(value);
   if (!Number.isFinite(number) || number === 0) {
@@ -64,6 +73,35 @@ function formatPercent(value) {
     maximumFractionDigits: 2,
     style: "percent"
   }).format(number);
+}
+
+function formatSignedPercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return NO_DATA;
+  }
+
+  const sign = number > 0 ? "+" : "";
+  return `${sign}${new Intl.NumberFormat("en-US", {
+    maximumFractionDigits: 1,
+    style: "percent"
+  }).format(number)}`;
+}
+
+function formatDateTime(value) {
+  if (!value) {
+    return NO_DATA;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return NO_DATA;
+  }
+
+  return date.toLocaleString("ja-JP", {
+    dateStyle: "short",
+    timeStyle: "short"
+  });
 }
 
 function formatList(items, fallback = NO_DATA) {
@@ -137,7 +175,12 @@ function createDiscoveryEmbed(discoveries) {
       `データ取得元: ${stats.sourceLabel || "CLI"}`,
       `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
       `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? discoveries.length)}`,
-      `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`
+      `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)}`,
+      `SM買い3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
+      `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)}`,
+      `流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
+      `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`,
+      `実行時間: ${formatDuration(stats.durationMs)}`
     ].join("\n")
   });
 
@@ -360,9 +403,12 @@ function createRadarEmbed(results, stats = {}) {
       `データ取得元: ${stats.sourceLabel || "CLI"}`,
       `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
       `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
+      `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)} / 3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
+      `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)} / 流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
       `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
       `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
-      `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`
+      `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`,
+      `実行時間: ${formatDuration(stats.durationMs)}`
     ].join("\n")
   });
 
@@ -430,10 +476,87 @@ function createRadarEmbed(results, stats = {}) {
   return embed;
 }
 
+function formatReviewToken(item) {
+  const symbol = item.symbol || UNKNOWN_SYMBOL;
+  const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
+
+  return [
+    `**${symbol}**`,
+    `検出時MCAP: ${formatUsd(item.detectedMarketCapUsd)}｜現在MCAP: ${formatUsd(item.currentMarketCapUsd)}`,
+    `変化率: **${change}**｜最新Confidence: ${formatConfidence(item.finalConfidence)}`,
+    `最高Final Score: **${item.highestFinalScore ?? item.finalScore}/100**`,
+    `再出現: ${formatTradeCount(item.appearanceCount)}回`,
+    `初回: ${formatDateTime(item.firstDetectedAt)}`,
+    `最新: ${formatDateTime(item.latestDetectedAt)}`,
+    `注意点: ${formatList(item.warnings, NO_WARNINGS)}`
+  ].join("\n");
+}
+
+function formatReviewList(items, fallback) {
+  if (!items || items.length === 0) {
+    return fallback;
+  }
+
+  return truncate(items.map(formatReviewToken).join("\n\n"), 1024);
+}
+
+function createReviewEmbed(review) {
+  const stats = review.stats || {};
+  const confidenceCounts = stats.confidenceCounts || {};
+  const embed = new EmbedBuilder()
+    .setColor(0x95d5b2)
+    .setTitle("しえすたん Signal Review")
+    .setDescription("過去のAlpha Radarシグナルを現在のToken Infoと比べる答え合わせですにゃ。投資助言ではないにゃ。")
+    .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "レビュー概要",
+    value: [
+      `対象期間: ${stats.reviewWindow || NO_DATA}`,
+      `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
+      `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
+      `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
+      `評価可能: ${formatTradeCount(stats.evaluableCount ?? 0)}件`,
+      `評価保留: ${formatTradeCount(stats.pendingCount ?? 0)}件`,
+      `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`
+    ].join("\n")
+  });
+
+  if ((stats.tokenCount ?? 0) === 0) {
+    embed.addFields({
+      name: "レビュー対象なし",
+      value: "まだ `!radar solana` の保存結果がないにゃ。先にAlpha Radarを実行してくださいにゃ。"
+    });
+    return embed;
+  }
+
+  embed.addFields(
+    {
+      name: "変化率上位",
+      value: formatReviewList(review.topGainers, "評価できる上昇候補はまだありませんにゃ。")
+    },
+    {
+      name: "変化率下位",
+      value: formatReviewList(review.topLosers, "評価できる下落候補はまだありませんにゃ。")
+    },
+    {
+      name: "再出現した候補",
+      value: formatReviewList(review.repeatedTokens, "同じトークンの再出現はまだありませんにゃ。")
+    },
+    {
+      name: "注意点が多い候補",
+      value: formatReviewList(review.warningHeavy, "大きな注意点が多い候補はありませんにゃ。")
+    }
+  );
+
+  return embed;
+}
+
 module.exports = {
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,
   createEarlySignalEmbed,
-  createRadarEmbed
+  createRadarEmbed,
+  createReviewEmbed
 };

@@ -8,10 +8,12 @@ const {
   createDiscoveryComponents,
   createDiscoveryEmbed,
   createEarlySignalEmbed,
-  createRadarEmbed
+  createRadarEmbed,
+  createReviewEmbed
 } = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
 const { runSolanaRadar } = require("./src/radar");
+const { reviewSolanaRadarSignals } = require("./src/review");
 const { scoreTokens } = require("./src/scoring");
 const { saveDiscoveryResult, saveRadarResult, saveScanResult } = require("./src/storage");
 
@@ -85,8 +87,9 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
-        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで100件取得します。" },
-        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで100件取得します。" },
+        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで200件取得します。" },
+        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで200件取得します。" },
+        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--all` / `--24h` / `--7d` も使えます。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -185,6 +188,24 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to run Solana radar:", error);
       await reply.edit("SolanaのAlpha Radarに失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (parts[0] === "!review" && parts[1] === "solana" && (parts.length === 2 || ["--all", "--24h", "--7d"].includes(parts[2]))) {
+    const option = parts[2] ? parts[2].slice(2) : "default";
+    const reply = await message.reply("過去のAlpha Radarシグナルを答え合わせ中ですにゃ...");
+
+    try {
+      const review = await reviewSolanaRadarSignals({ option });
+
+      await reply.edit({
+        content: "",
+        embeds: [createReviewEmbed(review)]
+      });
+    } catch (error) {
+      console.error("Failed to review Solana radar signals:", error);
+      await reply.edit("Signal Reviewに失敗しましたにゃ。");
     }
     return;
   }

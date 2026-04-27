@@ -66,7 +66,7 @@ function allowsHighConfidence({ discovery, analysis, isDexSellDominant }) {
   return hasStrongDeepFlow(analysis, isDexSellDominant);
 }
 
-function createStats({ discoveries, analyzedResults, displayedResults }) {
+function createStats({ discoveries, analyzedResults, displayedResults, durationMs }) {
   const confidenceCounts = {
     high: 0,
     medium: 0,
@@ -85,9 +85,14 @@ function createStats({ discoveries, analyzedResults, displayedResults }) {
     sourceLabel: discoveries.stats?.sourceLabel || "CLI",
     dexTradeCount: discoveries.stats?.dexTradeCount || 0,
     g0CandidateCount: discoveries.length,
+    buyCountAtLeast2: discoveries.stats?.buyCountAtLeast2 || 0,
+    buyCountAtLeast3: discoveries.stats?.buyCountAtLeast3 || 0,
+    withMarketCap: discoveries.stats?.withMarketCap || 0,
+    withLiquidity: discoveries.stats?.withLiquidity || 0,
     deepAnalyzedCount: analyzedResults.length,
     confidenceCounts,
     displayedCount: displayedResults.length,
+    durationMs,
     hasMediumOrHigher: confidenceCounts.high + confidenceCounts.medium > 0,
     hasOnlyRisky: analyzedResults.length > 0 && analyzedResults.every((result) => result.finalConfidence === "risky")
   };
@@ -169,6 +174,7 @@ function combineScores(discovery, analysis) {
 }
 
 async function runSolanaRadar({ source = "cli" } = {}) {
+  const startedAt = Date.now();
   const discoveries = await discoverSolanaCandidates({ limit: 5, source });
   const analyzedResults = [];
 
@@ -212,7 +218,8 @@ async function runSolanaRadar({ source = "cli" } = {}) {
     stats: createStats({
       discoveries,
       analyzedResults,
-      displayedResults: results
+      displayedResults: results,
+      durationMs: Date.now() - startedAt
     })
   };
 }

@@ -75,9 +75,9 @@ Logged in as BotName#0000
 | `!sleep` | お昼寝したいときのかわいい返事を返します。 |
 | `!nansen-test` | Node.js から Nansen CLI の `nansen --version` を実行し、接続できているかを Embed で表示します。 |
 | `!discover solana` | Nansen CLI の Smart Money DEX Trades から、Solana 上で Smart Money が直近で買っている候補を発見します。投資助言ではありません。 |
-| `!discover solana --wide` | Nansen REST API で Smart Money DEX Trades を100件取得し、広めの母数から候補を発見します。投資助言ではありません。 |
+| `!discover solana --wide` | Nansen REST API で Smart Money DEX Trades を200件取得し、広めの母数から候補を発見します。投資助言ではありません。 |
 | `!radar solana` | CLI版の G0 Discovery 上位候補を Deep 分析まで通し、統合スコア付きの Early Signal 候補を表示します。投資助言ではありません。 |
-| `!radar solana --wide` | REST API wide版の G0 Discovery から Deep 分析まで通し、広めの母数で Alpha Radar を実行します。投資助言ではありません。 |
+| `!radar solana --wide` | REST API wide版のG0 Discoveryを200件の母数で実行し、上位5件だけをDeep分析に通します。投資助言ではありません。 |
 | `!scan solana` | Nansen CLI の Smart Money netflow を使って、Solana 上の流入候補をスキャンし、簡易スコア付きで上位3件を表示します。投資助言ではありません。 |
 | `!deep solana TOKEN_ADDRESS` | 候補トークンを Flow Intelligence、Token Holders、DEX Trades で深掘りし、4-Gate 形式の分析を表示します。投資助言ではありません。 |
 

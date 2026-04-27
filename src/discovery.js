@@ -132,7 +132,7 @@ function attachDiscoveryStats(discoveries, stats) {
 
 async function getDexTradesBySource(source) {
   if (source === "rest") {
-    return getSolanaSmartMoneyDexTradesRest({ page: 1, perPage: 100 });
+    return getSolanaSmartMoneyDexTradesRest({ page: 1, perPage: 200 });
   }
 
   return getSolanaSmartMoneyDexTrades();
@@ -157,10 +157,31 @@ function getConfidence(score, hasThinInfo) {
   return "risky";
 }
 
+function getConfidenceRank(confidence) {
+  const ranks = {
+    high: 3,
+    medium: 2,
+    low: 1,
+    risky: 0
+  };
+
+  return ranks[confidence] ?? 0;
+}
+
+function getDiscoveryBreakdown(candidates) {
+  return {
+    buyCountAtLeast2: candidates.filter((candidate) => candidate.buyCount >= 2).length,
+    buyCountAtLeast3: candidates.filter((candidate) => candidate.buyCount >= 3).length,
+    withMarketCap: candidates.filter((candidate) => candidate.marketCapUsd > 0).length,
+    withLiquidity: candidates.filter((candidate) => candidate.liquidityUsd > 0).length
+  };
+}
+
 function scoreCandidate(candidate) {
   const notes = [];
   const warnings = [...candidate.warnings];
   let score = 0;
+  let scoreCap = 100;
 
   if (candidate.buyValueUsd > candidate.sellValueUsd) {
     score += 30;
@@ -171,7 +192,13 @@ function scoreCandidate(candidate) {
     score += Math.min(candidate.buyCount * 6, 20);
     notes.push("複数回SMに買われていますにゃ");
   } else if (candidate.buyCount === 1) {
+    scoreCap = 60;
     warnings.push("Smart Moneyの買いが1件だけなので、継続性はDeep分析で確認してくださいにゃ");
+  }
+
+  if (candidate.buyCount >= 3 && candidate.buyValueUsd >= candidate.sellValueUsd && candidate.liquidityUsd > 0) {
+    score += 10;
+    notes.push("Smart Moneyの買いが3件以上あり、売り優勢でもなく流動性も確認できていますにゃ");
   }
 
   if (candidate.marketCapUsd > 0 && candidate.marketCapUsd <= 50000000) {
@@ -198,7 +225,7 @@ function scoreCandidate(candidate) {
   }
 
   const hasThinInfo = !candidate.marketCapUsd || !candidate.liquidityUsd || !candidate.holderCount;
-  const finalScore = Math.max(Math.min(Math.round(score), 100), 0);
+  const finalScore = Math.max(Math.min(Math.round(score), scoreCap), 0);
   const confidence = getConfidence(finalScore, hasThinInfo);
 
   return {
@@ -211,24 +238,29 @@ function scoreCandidate(candidate) {
 }
 
 async function discoverSolanaCandidates({ limit = 3, source = "cli" } = {}) {
+  const startedAt = Date.now();
   const rows = await getDexTradesBySource(source);
   const aggregated = aggregateDexTrades(rows);
   const enriched = await enrichCandidates(aggregated);
   const sourceLabel = source === "rest" ? "REST wide" : "CLI";
-
-  const discoveries = enriched
+  const scoredCandidates = enriched
     .map(scoreCandidate)
-    .filter((candidate) => candidate.buyCount > 0)
+    .filter((candidate) => candidate.buyCount > 0);
+  const breakdown = getDiscoveryBreakdown(scoredCandidates);
+
+  const discoveries = scoredCandidates
     .sort((a, b) => {
-      const aBuyDominance = a.buyValueUsd > a.sellValueUsd ? 1 : 0;
-      const bBuyDominance = b.buyValueUsd > b.sellValueUsd ? 1 : 0;
-
-      if (aBuyDominance !== bBuyDominance) {
-        return bBuyDominance - aBuyDominance;
-      }
-
       if (a.score !== b.score) {
         return b.score - a.score;
+      }
+
+      const confidenceDiff = getConfidenceRank(b.confidence) - getConfidenceRank(a.confidence);
+      if (confidenceDiff !== 0) {
+        return confidenceDiff;
+      }
+
+      if (a.buyCount !== b.buyCount) {
+        return b.buyCount - a.buyCount;
       }
 
       return b.buyValueUsd - a.buyValueUsd;
@@ -239,8 +271,13 @@ async function discoverSolanaCandidates({ limit = 3, source = "cli" } = {}) {
     source,
     sourceLabel,
     dexTradeCount: rows.length,
-    g0CandidateCount: aggregated.length,
+    g0CandidateCount: scoredCandidates.length,
+    buyCountAtLeast2: breakdown.buyCountAtLeast2,
+    buyCountAtLeast3: breakdown.buyCountAtLeast3,
+    withMarketCap: breakdown.withMarketCap,
+    withLiquidity: breakdown.withLiquidity,
     displayedCount: discoveries.length,
+    durationMs: Date.now() - startedAt,
     pagination: rows._meta?.pagination
   });
 }

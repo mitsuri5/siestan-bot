@@ -68,7 +68,12 @@ async function saveRadarResult({ chain, results, stats }) {
   return radarResult;
 }
 
+async function readRadarResults() {
+  return readJsonArray(radarPath);
+}
+
 module.exports = {
+  readRadarResults,
   saveDiscoveryResult,
   saveRadarResult,
   saveScanResult
