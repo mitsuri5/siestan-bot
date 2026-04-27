@@ -85,8 +85,8 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
-        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。" },
-        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。" },
+        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで100件取得します。" },
+        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで100件取得します。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -131,11 +131,17 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (message.content === "!discover solana") {
-    const reply = await message.reply("SolanaのG0 Discoveryを実行中ですにゃ...");
+  if (parts[0] === "!discover" && parts[1] === "solana" && (parts.length === 2 || parts[2] === "--wide")) {
+    const useWide = parts[2] === "--wide";
+    const source = useWide ? "rest" : "cli";
+    const reply = await message.reply(
+      useWide
+        ? "SolanaのG0 Discovery wideをREST APIで実行中ですにゃ..."
+        : "SolanaのG0 Discoveryを実行中ですにゃ..."
+    );
 
     try {
-      const discoveries = await discoverSolanaCandidates();
+      const discoveries = await discoverSolanaCandidates({ source });
 
       await saveDiscoveryResult({
         chain: "solana",
@@ -154,11 +160,17 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (message.content === "!radar solana") {
-    const reply = await message.reply("SolanaのAlpha Radarを実行中ですにゃ...");
+  if (parts[0] === "!radar" && parts[1] === "solana" && (parts.length === 2 || parts[2] === "--wide")) {
+    const useWide = parts[2] === "--wide";
+    const source = useWide ? "rest" : "cli";
+    const reply = await message.reply(
+      useWide
+        ? "SolanaのAlpha Radar wideをREST APIで実行中ですにゃ..."
+        : "SolanaのAlpha Radarを実行中ですにゃ..."
+    );
 
     try {
-      const radar = await runSolanaRadar();
+      const radar = await runSolanaRadar({ source });
 
       await saveRadarResult({
         chain: "solana",

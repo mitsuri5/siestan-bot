@@ -122,6 +122,7 @@ function createDiscoveryComponents(discoveries) {
 }
 
 function createDiscoveryEmbed(discoveries) {
+  const stats = discoveries.stats || {};
   const embed = new EmbedBuilder()
     .setColor(0x6ec6ff)
     .setTitle("しえすたん G0 Discovery")
@@ -129,6 +130,16 @@ function createDiscoveryEmbed(discoveries) {
       "Smart Money DEX Tradesから見つけたEarly Signal Radarの候補ですにゃ。投資助言ではないにゃ。"
     )
     .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "スキャン概要",
+    value: [
+      `データ取得元: ${stats.sourceLabel || "CLI"}`,
+      `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+      `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? discoveries.length)}`,
+      `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`
+    ].join("\n")
+  });
 
   if (discoveries.length === 0) {
     embed.addFields({
@@ -150,9 +161,11 @@ function createDiscoveryEmbed(discoveries) {
           `**${symbol}**`,
           `Score **${discovery.score}/100**｜Confidence **${formatConfidence(discovery.confidence)}**`,
           "",
-          "**売買**",
+          "**SM売買金額**",
           `買い: **${formatTradeUsd(discovery.buyValueUsd)}**｜売り: **${formatTradeUsd(discovery.sellValueUsd)}**`,
-          `買い件数: ${formatTradeCount(discovery.buyCount)}｜売り件数: ${formatTradeCount(discovery.sellCount)}`,
+          "",
+          "**SM売買件数**",
+          `買い: ${formatTradeCount(discovery.buyCount)}｜売り: ${formatTradeCount(discovery.sellCount)}`,
           "",
           "**基本情報**",
           `MCAP: **${formatUsd(discovery.marketCapUsd)}**`,
@@ -344,6 +357,8 @@ function createRadarEmbed(results, stats = {}) {
   embed.addFields({
     name: "スキャン概要",
     value: [
+      `データ取得元: ${stats.sourceLabel || "CLI"}`,
+      `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
       `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
       `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
       `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
@@ -389,8 +404,11 @@ function createRadarEmbed(results, stats = {}) {
           `7d Netflow: ${formatUsd(netflow.net_flow_7d_usd)}`,
           `Flow Intelligence推定: ${formatUsd(flow.netFlowUsd)}`,
           "",
-          "**DEX売買**",
+          "**Deep DEX売買**",
           `買い: **${formatTradeUsd(dexTrades.buyValueUsd ?? discovery.buyValueUsd)}**｜売り: **${formatTradeUsd(dexTrades.sellValueUsd ?? discovery.sellValueUsd)}**`,
+          "",
+          "**SM売買件数**",
+          `買い: ${formatTradeCount(discovery.buyCount)}｜売り: ${formatTradeCount(discovery.sellCount)}`,
           "",
           "**G0メモ**",
           g0Notes,

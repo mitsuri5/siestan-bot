@@ -1,4 +1,4 @@
-const { getSolanaSmartMoneyDexTrades, getTokenInfo } = require("./nansen");
+const { getSolanaSmartMoneyDexTrades, getSolanaSmartMoneyDexTradesRest, getTokenInfo } = require("./nansen");
 
 const QUOTE_TOKENS = new Set([
   "So11111111111111111111111111111111111111112",
@@ -121,6 +121,23 @@ async function enrichCandidates(candidates) {
   return enriched;
 }
 
+function attachDiscoveryStats(discoveries, stats) {
+  Object.defineProperty(discoveries, "stats", {
+    enumerable: false,
+    value: stats
+  });
+
+  return discoveries;
+}
+
+async function getDexTradesBySource(source) {
+  if (source === "rest") {
+    return getSolanaSmartMoneyDexTradesRest({ page: 1, perPage: 100 });
+  }
+
+  return getSolanaSmartMoneyDexTrades();
+}
+
 function getConfidence(score, hasThinInfo) {
   if (hasThinInfo && score >= 80) {
     return "medium";
@@ -153,6 +170,8 @@ function scoreCandidate(candidate) {
   if (candidate.buyCount >= 2) {
     score += Math.min(candidate.buyCount * 6, 20);
     notes.push("複数回SMに買われていますにゃ");
+  } else if (candidate.buyCount === 1) {
+    warnings.push("Smart Moneyの買いが1件だけなので、継続性はDeep分析で確認してくださいにゃ");
   }
 
   if (candidate.marketCapUsd > 0 && candidate.marketCapUsd <= 50000000) {
@@ -180,22 +199,24 @@ function scoreCandidate(candidate) {
 
   const hasThinInfo = !candidate.marketCapUsd || !candidate.liquidityUsd || !candidate.holderCount;
   const finalScore = Math.max(Math.min(Math.round(score), 100), 0);
+  const confidence = getConfidence(finalScore, hasThinInfo);
 
   return {
     ...candidate,
     score: finalScore,
-    confidence: getConfidence(finalScore, hasThinInfo),
+    confidence: candidate.buyCount === 1 && confidence === "high" ? "medium" : confidence,
     notes,
     warnings
   };
 }
 
-async function discoverSolanaCandidates({ limit = 3 } = {}) {
-  const rows = await getSolanaSmartMoneyDexTrades();
+async function discoverSolanaCandidates({ limit = 3, source = "cli" } = {}) {
+  const rows = await getDexTradesBySource(source);
   const aggregated = aggregateDexTrades(rows);
   const enriched = await enrichCandidates(aggregated);
+  const sourceLabel = source === "rest" ? "REST wide" : "CLI";
 
-  return enriched
+  const discoveries = enriched
     .map(scoreCandidate)
     .filter((candidate) => candidate.buyCount > 0)
     .sort((a, b) => {
@@ -213,6 +234,15 @@ async function discoverSolanaCandidates({ limit = 3 } = {}) {
       return b.buyValueUsd - a.buyValueUsd;
     })
     .slice(0, limit);
+
+  return attachDiscoveryStats(discoveries, {
+    source,
+    sourceLabel,
+    dexTradeCount: rows.length,
+    g0CandidateCount: aggregated.length,
+    displayedCount: discoveries.length,
+    pagination: rows._meta?.pagination
+  });
 }
 
 module.exports = {

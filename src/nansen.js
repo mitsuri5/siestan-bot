@@ -58,6 +58,15 @@ function extractRows(response) {
   return [];
 }
 
+function attachMeta(rows, meta) {
+  Object.defineProperty(rows, "_meta", {
+    enumerable: false,
+    value: meta
+  });
+
+  return rows;
+}
+
 async function getNansenVersion() {
   return runNansen(["--version"]);
 }
@@ -85,7 +94,65 @@ async function getSolanaSmartMoneyDexTrades() {
     "solana"
   ]);
 
-  return extractRows(parsed);
+  const rows = extractRows(parsed);
+  return attachMeta(rows, {
+    source: "cli",
+    pagination: parsed.data?.pagination,
+    rowCount: rows.length
+  });
+}
+
+async function getSolanaSmartMoneyDexTradesRest({ page = 1, perPage = 100 } = {}) {
+  const apiKey = process.env.NANSEN_API_KEY;
+
+  if (!apiKey) {
+    throw new Error("NANSEN_API_KEY is not set.");
+  }
+
+  if (typeof fetch !== "function") {
+    throw new Error("Global fetch is not available in this Node.js runtime.");
+  }
+
+  const response = await fetch("https://api.nansen.ai/api/v1/smart-money/dex-trades", {
+    method: "POST",
+    headers: {
+      apikey: apiKey,
+      "Content-Type": "application/json",
+      "X-Client-Type": "siestan-bot"
+    },
+    body: JSON.stringify({
+      chains: ["solana"],
+      filters: {},
+      order_by: null,
+      pagination: {
+        page,
+        per_page: perPage
+      }
+    })
+  });
+
+  if (!response.ok) {
+    let message = `Nansen REST API request failed with status ${response.status}.`;
+    try {
+      const errorBody = await response.json();
+      const detail = errorBody?.message || errorBody?.detail || errorBody?.error;
+      if (detail) {
+        message = `${message} ${detail}`;
+      }
+    } catch (_error) {
+      // Keep the sanitized status-only error if the response is not JSON.
+    }
+
+    throw new Error(message);
+  }
+
+  const parsed = await response.json();
+  const rows = extractRows(parsed);
+  return attachMeta(rows, {
+    source: "rest",
+    pagination: parsed.pagination || parsed.data?.pagination,
+    rowCount: rows.length
+  });
 }
 
 async function getTokenFlowIntelligence({ chain, token }) {
@@ -153,6 +220,7 @@ async function getTokenDexTrades({ chain, token }) {
 module.exports = {
   getNansenVersion,
   getSolanaSmartMoneyDexTrades,
+  getSolanaSmartMoneyDexTradesRest,
   getSolanaSmartMoneyNetflow,
   getTokenFlowIntelligence,
   getTokenHolders,

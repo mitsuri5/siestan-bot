@@ -48,6 +48,24 @@ function getTokenInfoCompleteness(analysis) {
   };
 }
 
+function hasStrongDeepFlow(analysis, isDexSellDominant) {
+  const netflow = analysis.netflowToken || {};
+  return (
+    toNumber(netflow.net_flow_24h_usd) > 0 &&
+    toNumber(netflow.net_flow_7d_usd) > 0 &&
+    toNumber(analysis.flow?.netFlowUsd) > 0 &&
+    !isDexSellDominant
+  );
+}
+
+function allowsHighConfidence({ discovery, analysis, isDexSellDominant }) {
+  if (discovery.buyCount >= 2) {
+    return true;
+  }
+
+  return hasStrongDeepFlow(analysis, isDexSellDominant);
+}
+
 function createStats({ discoveries, analyzedResults, displayedResults }) {
   const confidenceCounts = {
     high: 0,
@@ -63,6 +81,9 @@ function createStats({ discoveries, analyzedResults, displayedResults }) {
   }
 
   return {
+    source: discoveries.stats?.source || "cli",
+    sourceLabel: discoveries.stats?.sourceLabel || "CLI",
+    dexTradeCount: discoveries.stats?.dexTradeCount || 0,
     g0CandidateCount: discoveries.length,
     deepAnalyzedCount: analyzedResults.length,
     confidenceCounts,
@@ -84,6 +105,7 @@ function combineScores(discovery, analysis) {
   const isDexStrongSellDominant = buyValue > 0 ? sellValue >= buyValue * 2 : sellValue > 0;
   const tokenInfo = getTokenInfoCompleteness(analysis);
   let scoreCap = 100;
+  const canBeHighConfidence = allowsHighConfidence({ discovery, analysis, isDexSellDominant });
 
   if (analysis.confidence === "high") {
     finalScore += 5;
@@ -126,6 +148,11 @@ function combineScores(discovery, analysis) {
     finalConfidence = scoreConfidence;
   }
 
+  if (finalConfidence === "high" && !canBeHighConfidence) {
+    finalConfidence = "medium";
+    warnings.push("Smart Moneyの買いが単発寄りなので、high判定は見送っていますにゃ");
+  }
+
   const filteredG0Notes = isDexSellDominant ? g0Notes.filter((note) => !isBuyDominanceNote(note)) : g0Notes;
 
   return {
@@ -141,8 +168,8 @@ function combineScores(discovery, analysis) {
   };
 }
 
-async function runSolanaRadar() {
-  const discoveries = await discoverSolanaCandidates({ limit: 5 });
+async function runSolanaRadar({ source = "cli" } = {}) {
+  const discoveries = await discoverSolanaCandidates({ limit: 5, source });
   const analyzedResults = [];
 
   for (const discovery of discoveries) {
