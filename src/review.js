@@ -1,4 +1,4 @@
-const { getTokenInfo } = require("./nansen");
+const { getSolanaTokenOhlcv, getTokenInfo } = require("./nansen");
 const { readRadarResults } = require("./storage");
 
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
@@ -16,6 +16,95 @@ const SINGLE_BUY_WARNING = "Smart Moneyの買いが1件だけなので、継続�
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function parseNansenTime(value) {
+  if (!value) {
+    return NaN;
+  }
+
+  if (typeof value === "number") {
+    return value < 10000000000 ? value * 1000 : value;
+  }
+
+  const text = String(value);
+  const normalized = /(?:Z|[+-]\d{2}:?\d{2})$/.test(text) ? text : `${text}Z`;
+  const parsed = new Date(normalized).getTime();
+  return Number.isFinite(parsed) ? parsed : NaN;
+}
+
+function getMarketCapHigh(marketCap) {
+  if (typeof marketCap === "number") {
+    return toNumber(marketCap);
+  }
+
+  if (marketCap && typeof marketCap === "object") {
+    return toNumber(marketCap.high);
+  }
+
+  return 0;
+}
+
+function getMarketCapOpenOrClose(marketCap) {
+  if (typeof marketCap === "number") {
+    return toNumber(marketCap);
+  }
+
+  if (marketCap && typeof marketCap === "object") {
+    return toNumber(marketCap.open) || toNumber(marketCap.close);
+  }
+
+  return 0;
+}
+
+function getOhlcHigh(value) {
+  if (typeof value === "number") {
+    return toNumber(value);
+  }
+
+  if (value && typeof value === "object") {
+    return toNumber(value.high);
+  }
+
+  return 0;
+}
+
+function getOhlcOpenOrClose(value) {
+  if (typeof value === "number") {
+    return toNumber(value);
+  }
+
+  if (value && typeof value === "object") {
+    return toNumber(value.open) || toNumber(value.close);
+  }
+
+  return 0;
+}
+
+function getOhlcClose(value) {
+  if (typeof value === "number") {
+    return toNumber(value);
+  }
+
+  if (value && typeof value === "object") {
+    return toNumber(value.close);
+  }
+
+  return 0;
+}
+
+function getTimeframeStart(timestampMs, timeframe) {
+  if (!Number.isFinite(timestampMs)) {
+    return NaN;
+  }
+
+  if (timeframe === "1h") {
+    const date = new Date(timestampMs);
+    date.setUTCMinutes(0, 0, 0);
+    return date.getTime();
+  }
+
+  return timestampMs;
 }
 
 function getConfidenceCounts(items) {
@@ -193,6 +282,102 @@ function groupDetectionsByToken(detections) {
   });
 }
 
+async function loadOhlcvPerformance(detection, currentInfo, shouldLoad) {
+  const timeframe = "1h";
+
+  if (!shouldLoad) {
+    return {
+      status: "skipped"
+    };
+  }
+
+  try {
+    const rows = await getSolanaTokenOhlcv({
+      tokenAddress: detection.address,
+      timeframe
+    });
+    const detectedAtMs = new Date(detection.detectedAt).getTime();
+    const detectedCandleStartMs = getTimeframeStart(detectedAtMs, timeframe);
+    const candles = rows
+      .map((row) => ({
+        intervalStart: row.interval_start,
+        intervalStartMs: parseNansenTime(row.interval_start),
+        baselineMarketCapUsd: getMarketCapOpenOrClose(row.market_cap),
+        marketCapHighUsd: getMarketCapHigh(row.market_cap),
+        baselinePriceUsd: getOhlcOpenOrClose(row),
+        priceHighUsd: getOhlcHigh(row),
+        priceCloseUsd: getOhlcClose(row)
+      }))
+      .filter(
+        (row) =>
+          Number.isFinite(row.intervalStartMs) &&
+          row.intervalStartMs >= detectedCandleStartMs &&
+          (row.marketCapHighUsd > 0 || row.priceHighUsd > 0)
+      )
+      .sort((a, b) => a.intervalStartMs - b.intervalStartMs);
+
+    if (candles.length === 0) {
+      return {
+        status: "waiting",
+        candleCount: 0
+      };
+    }
+
+    const detectedMarketCapUsd = toNumber(detection.detectedMarketCapUsd);
+    const baselineMarketCapUsd = detectedMarketCapUsd > 0 ? detectedMarketCapUsd : candles[0].baselineMarketCapUsd;
+    const marketCapCandles = candles.filter((row) => row.marketCapHighUsd > 0);
+    const priceCandles = candles.filter((row) => row.priceHighUsd > 0);
+    const maxCandle = marketCapCandles.reduce(
+      (best, row) => (row.marketCapHighUsd > best.marketCapHighUsd ? row : best),
+      marketCapCandles[0] || null
+    );
+    const currentMarketCapUsd = toNumber(currentInfo.marketCapUsd);
+    const maxMarketCapFromOhlcv = maxCandle?.marketCapHighUsd || 0;
+    const currentIsMax = currentMarketCapUsd > maxMarketCapFromOhlcv;
+    const maxMarketCapUsd = currentIsMax ? currentMarketCapUsd : maxMarketCapFromOhlcv;
+    const canCalculateMarketCapGain = baselineMarketCapUsd > 0 && maxMarketCapUsd > 0;
+    const priceBaselineCandle = priceCandles.find((row) => row.baselinePriceUsd > 0);
+    const baselinePriceUsd = priceBaselineCandle?.baselinePriceUsd || 0;
+    const maxPriceCandle = priceCandles.reduce(
+      (best, row) => (row.priceHighUsd > best.priceHighUsd ? row : best),
+      priceCandles[0] || null
+    );
+    const latestPriceCandle = [...priceCandles].reverse().find((row) => row.priceCloseUsd > 0);
+    const maxPriceUsd = maxPriceCandle?.priceHighUsd || 0;
+    const canCalculatePriceGain = baselinePriceUsd > 0 && maxPriceUsd > 0;
+
+    if (!canCalculateMarketCapGain && !canCalculatePriceGain) {
+      return {
+        status: "not_evaluable",
+        candleCount: candles.length
+      };
+    }
+
+    return {
+      status: "ready",
+      candleCount: candles.length,
+      baselineMarketCapUsd,
+      usedOhlcvBaseline: detectedMarketCapUsd <= 0,
+      maxMarketCapUsd,
+      maxGainPct: canCalculateMarketCapGain ? (maxMarketCapUsd - baselineMarketCapUsd) / baselineMarketCapUsd : null,
+      maxReachedAt: currentIsMax ? "current" : maxCandle ? new Date(maxCandle.intervalStartMs).toISOString() : null,
+      marketCapEvaluable: canCalculateMarketCapGain,
+      baselinePriceUsd,
+      latestPriceUsd: latestPriceCandle?.priceCloseUsd || 0,
+      maxPriceUsd,
+      maxPriceGainPct: canCalculatePriceGain ? (maxPriceUsd - baselinePriceUsd) / baselinePriceUsd : null,
+      maxPriceReachedAt: maxPriceCandle ? new Date(maxPriceCandle.intervalStartMs).toISOString() : null,
+      priceEvaluable: canCalculatePriceGain
+    };
+  } catch (error) {
+    console.error("Failed to load token OHLCV for review:", detection.address, error);
+    return {
+      status: "waiting",
+      candleCount: 0
+    };
+  }
+}
+
 async function loadCurrentTokenInfo(address) {
   try {
     const rawInfo = await getTokenInfo({
@@ -256,50 +441,66 @@ function getTopMovers(items, direction) {
   return sorted.slice(0, 3);
 }
 
+function getTopPriceGainers(items) {
+  return items
+    .filter((item) => item.ohlcvPerformance.priceEvaluable)
+    .sort((a, b) => b.ohlcvPerformance.maxPriceGainPct - a.ohlcvPerformance.maxPriceGainPct)
+    .slice(0, 5);
+}
+
 async function reviewSolanaRadarSignals({ option = "default", mature = null } = {}) {
   const radarRuns = await readRadarResults();
   const detections = collectRadarDetections(radarRuns, "solana");
   const selection = selectReviewDetections(detections, { option, mature });
   const tokens = groupDetectionsByToken(selection.detections);
   const reviewed = [];
+  const shouldLoadOhlcv = Boolean(mature);
 
   for (const token of tokens) {
     const currentInfo = await loadCurrentTokenInfo(token.address);
-    const detection = token.latest;
-    const comparison = compareMarketCap(detection, currentInfo);
+    const firstDetection = token.first;
+    const latestDetection = token.latest;
+    const comparison = compareMarketCap(firstDetection, currentInfo);
+    const ohlcvPerformance = await loadOhlcvPerformance(firstDetection, currentInfo, shouldLoadOhlcv);
 
     reviewed.push({
       address: token.address,
-      symbol: currentInfo.symbol || detection.symbol,
+      symbol: currentInfo.symbol || latestDetection.symbol || firstDetection.symbol,
       name: currentInfo.name,
-      detectedAt: detection.detectedAt,
+      detectedAt: firstDetection.detectedAt,
       firstDetectedAt: token.first.detectedAt,
       latestDetectedAt: token.latest.detectedAt,
-      detectedAgeMs: Date.now() - new Date(token.latest.detectedAt).getTime(),
+      detectedAgeMs: Date.now() - new Date(token.first.detectedAt).getTime(),
       appearanceCount: token.appearanceCount,
-      finalScore: detection.finalScore,
+      finalScore: latestDetection.finalScore,
       highestFinalScore: token.highestScore,
-      finalConfidence: detection.finalConfidence,
-      detectedMarketCapUsd: detection.detectedMarketCapUsd,
+      finalConfidence: latestDetection.finalConfidence,
+      detectedMarketCapUsd: firstDetection.detectedMarketCapUsd,
       currentMarketCapUsd: currentInfo.marketCapUsd,
-      detectedLiquidityUsd: detection.detectedLiquidityUsd,
+      detectedLiquidityUsd: firstDetection.detectedLiquidityUsd,
       currentLiquidityUsd: currentInfo.liquidityUsd,
       currentHolderCount: currentInfo.holderCount,
-      netFlow24hUsd: detection.netFlow24hUsd,
-      netFlow7dUsd: detection.netFlow7dUsd,
-      flowIntelligenceNetFlowUsd: detection.flowIntelligenceNetFlowUsd,
-      deepDexBuyValueUsd: detection.deepDexBuyValueUsd,
-      deepDexSellValueUsd: detection.deepDexSellValueUsd,
-      smartMoneyBuyCount: detection.smartMoneyBuyCount,
-      warnings: detection.warnings,
-      warningCount: detection.warnings.length,
+      netFlow24hUsd: firstDetection.netFlow24hUsd,
+      netFlow7dUsd: firstDetection.netFlow7dUsd,
+      flowIntelligenceNetFlowUsd: firstDetection.flowIntelligenceNetFlowUsd,
+      deepDexBuyValueUsd: firstDetection.deepDexBuyValueUsd,
+      deepDexSellValueUsd: firstDetection.deepDexSellValueUsd,
+      smartMoneyBuyCount: firstDetection.smartMoneyBuyCount,
+      warnings: firstDetection.warnings,
+      warningCount: firstDetection.warnings.length,
       evaluable: comparison.evaluable,
-      changeRate: comparison.changeRate
+      changeRate: comparison.changeRate,
+      ohlcvPerformance
     });
   }
 
   const evaluableCount = reviewed.filter((item) => item.evaluable).length;
   const pendingCount = reviewed.length - evaluableCount;
+  const ohlcvSuccessCount = reviewed.filter((item) =>
+    ["ready", "waiting", "not_evaluable"].includes(item.ohlcvPerformance.status)
+  ).length;
+  const ohlcvReadyCount = reviewed.filter((item) => item.ohlcvPerformance.status === "ready").length;
+  const ohlcvWaitingCount = reviewed.filter((item) => item.ohlcvPerformance.status === "waiting").length;
 
   return {
     stats: {
@@ -309,6 +510,10 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
       matureCondition: selection.matureCondition,
       matureMatchedCount: selection.matureMatchedCount,
       matureExcludedTooNewCount: selection.matureExcludedTooNewCount,
+      ohlcvCheckedCount: shouldLoadOhlcv ? reviewed.length : 0,
+      ohlcvSuccessCount: shouldLoadOhlcv ? ohlcvSuccessCount : 0,
+      ohlcvReadyCount: shouldLoadOhlcv ? ohlcvReadyCount : 0,
+      ohlcvWaitingCount: shouldLoadOhlcv ? ohlcvWaitingCount : 0,
       tokenCount: reviewed.length,
       evaluableCount,
       pendingCount,
@@ -316,6 +521,7 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
     },
     topGainers: getTopMovers(reviewed, "up"),
     topLosers: getTopMovers(reviewed, "down"),
+    topPriceGainers: getTopPriceGainers(reviewed),
     repeatedTokens: reviewed
       .filter((item) => item.appearanceCount > 1)
       .sort((a, b) => b.appearanceCount - a.appearanceCount)

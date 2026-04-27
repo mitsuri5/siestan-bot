@@ -35,7 +35,8 @@ const client = new Client({
 function parseReviewOptions(parts) {
   const options = {
     option: "default",
-    mature: null
+    mature: null,
+    detail: false
   };
   const args = parts.slice(2);
 
@@ -54,6 +55,11 @@ function parseReviewOptions(parts) {
 
     if (arg === "--7d") {
       options.option = "7d";
+      continue;
+    }
+
+    if (arg === "--detail") {
+      options.detail = true;
       continue;
     }
 
@@ -130,7 +136,7 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
         { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで200件取得します。" },
         { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで200件取得します。" },
-        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
+        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--detail` / `--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -244,11 +250,17 @@ client.on(Events.MessageCreate, async (message) => {
 
     try {
       const review = await reviewSolanaRadarSignals(reviewOptions);
+      const embed = createReviewEmbed(review, { detail: reviewOptions.detail });
 
-      await reply.edit({
-        content: "",
-        embeds: [createReviewEmbed(review)]
-      });
+      try {
+        await reply.edit({
+          content: "",
+          embeds: [embed]
+        });
+      } catch (replyError) {
+        console.error("Failed to send Solana review embed:", replyError);
+        await reply.edit("Signal Reviewの表示が長すぎましたにゃ。`--detail`なし、または条件を絞ってもう一度試してくださいにゃ。");
+      }
     } catch (error) {
       console.error("Failed to review Solana radar signals:", error);
       await reply.edit("Signal Reviewに失敗しましたにゃ。");

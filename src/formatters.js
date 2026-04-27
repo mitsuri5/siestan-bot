@@ -88,6 +88,19 @@ function formatSignedPercent(value) {
   }).format(number)}`;
 }
 
+function formatTokenPrice(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) {
+    return NO_DATA;
+  }
+
+  return new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: number < 0.01 ? 8 : 6,
+    style: "currency"
+  }).format(number);
+}
+
 function formatDateTime(value) {
   if (!value) {
     return NO_DATA;
@@ -501,11 +514,27 @@ function createRadarEmbed(results, stats = {}) {
 function formatReviewToken(item) {
   const symbol = item.symbol || UNKNOWN_SYMBOL;
   const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
+  const ohlcv = item.ohlcvPerformance || { status: "skipped" };
+  let ohlcvLines = ["検出後最大MCAP: matureレビューで確認", "検出後最大上昇率: matureレビューで確認", "最大到達: matureレビューで確認"];
+
+  if (ohlcv.status === "not_evaluable") {
+    ohlcvLines = ["検出後最大MCAP: 評価保留", "検出後最大上昇率: 評価保留", "最大到達: 評価保留"];
+  } else if (ohlcv.status === "waiting") {
+    ohlcvLines = ["検出後最大MCAP: OHLCV蓄積待ち", "検出後最大上昇率: OHLCV蓄積待ち", "最大到達: OHLCV蓄積待ち"];
+  } else if (ohlcv.status === "ready") {
+    ohlcvLines = [
+      `検出後最大MCAP: ${formatUsd(ohlcv.maxMarketCapUsd)}`,
+      `検出後最大上昇率: **${formatSignedPercent(ohlcv.maxGainPct)}**`,
+      `上昇率基準MCAP: ${formatUsd(ohlcv.baselineMarketCapUsd)}${ohlcv.usedOhlcvBaseline ? "（OHLCV初回）" : "（検出時）"}`,
+      `最大到達: ${ohlcv.maxReachedAt === "current" ? "現在値" : formatDateTime(ohlcv.maxReachedAt)}`
+    ];
+  }
 
   return [
     `**${symbol}**`,
     `検出時MCAP: ${formatUsd(item.detectedMarketCapUsd)}｜現在MCAP: ${formatUsd(item.currentMarketCapUsd)}`,
     `変化率: **${change}**｜最新Confidence: ${formatConfidence(item.finalConfidence)}`,
+    ...ohlcvLines,
     `最高Final Score: **${item.highestFinalScore ?? item.finalScore}/100**`,
     `再出現: ${formatTradeCount(item.appearanceCount)}回`,
     `初回: ${formatDateTime(item.firstDetectedAt)}`,
@@ -515,12 +544,92 @@ function formatReviewToken(item) {
   ].join("\n");
 }
 
-function formatReviewList(items, fallback) {
+function formatReviewOhlcvLines(ohlcv) {
+  if (!ohlcv || ohlcv.status === "skipped") {
+    return [
+      "初回検出後の最大MCAP: matureレビューで確認",
+      "初回検出後の最大MCAP上昇率: matureレビューで確認",
+      "初回検出後の最大価格上昇率: matureレビューで確認"
+    ];
+  }
+
+  if (ohlcv.status === "waiting") {
+    return [
+      "初回検出後の最大MCAP: OHLCV蓄積待ち",
+      "初回検出後の最大MCAP上昇率: OHLCV蓄積待ち",
+      "初回検出後の最大価格上昇率: OHLCV蓄積待ち"
+    ];
+  }
+
+  if (ohlcv.status === "not_evaluable") {
+    return [
+      "MCAP評価: 評価保留",
+      "初回検出後の最大MCAP上昇率: 評価保留",
+      "初回検出後の最大価格上昇率: 評価保留"
+    ];
+  }
+
+  return [
+    `初回検出後の最大MCAP: ${ohlcv.marketCapEvaluable ? formatUsd(ohlcv.maxMarketCapUsd) : "評価保留"}`,
+    `初回検出後の最大MCAP上昇率: **${ohlcv.marketCapEvaluable ? formatSignedPercent(ohlcv.maxGainPct) : "評価保留"}**`,
+    `上昇率基準MCAP: ${ohlcv.marketCapEvaluable ? formatUsd(ohlcv.baselineMarketCapUsd) : "評価保留"}${ohlcv.marketCapEvaluable ? (ohlcv.usedOhlcvBaseline ? "（OHLCV初回値）" : "（初回検出時）") : ""}`,
+    `MCAP最大到達: ${ohlcv.marketCapEvaluable ? (ohlcv.maxReachedAt === "current" ? "現在値" : formatDateTime(ohlcv.maxReachedAt)) : "評価保留"}`,
+    `初回検出後の最大価格上昇率: **${ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留"}**`,
+    `上昇率基準価格: ${ohlcv.priceEvaluable ? `${formatTokenPrice(ohlcv.baselinePriceUsd)}（OHLCV初回値）` : "評価保留"}`,
+    `最大価格: ${ohlcv.priceEvaluable ? formatTokenPrice(ohlcv.maxPriceUsd) : "評価保留"}`,
+    `価格最大到達: ${ohlcv.priceEvaluable ? formatDateTime(ohlcv.maxPriceReachedAt) : "評価保留"}`
+  ];
+}
+
+function formatReviewTokenDetail(item) {
+  const symbol = item.symbol || UNKNOWN_SYMBOL;
+  const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
+
+  return [
+    `**${symbol}**`,
+    `初回検出時MCAP: ${formatUsd(item.detectedMarketCapUsd)}｜現在MCAP: ${formatUsd(item.currentMarketCapUsd)}`,
+    `初回検出からの現在MCAP変化率: **${change}**｜最新Confidence: ${formatConfidence(item.finalConfidence)}`,
+    ...formatReviewOhlcvLines(item.ohlcvPerformance),
+    `最高Final Score: **${item.highestFinalScore ?? item.finalScore}/100**`,
+    `再出現: ${formatTradeCount(item.appearanceCount)}回`,
+    `初回: ${formatDateTime(item.firstDetectedAt)}`,
+    `最新: ${formatDateTime(item.latestDetectedAt)}`,
+    `初回検出から: ${formatElapsed(item.detectedAgeMs)}`,
+    `注意点: ${formatList(item.warnings, NO_WARNINGS)}`
+  ].join("\n");
+}
+
+function formatReviewTokenSummary(item) {
+  const symbol = item.symbol || UNKNOWN_SYMBOL;
+  const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
+  const ohlcv = item.ohlcvPerformance || {};
+  const priceGain = ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留";
+
+  return [
+    `**${symbol}**`,
+    `現在MCAP変化率: ${change}｜最大価格上昇率: ${priceGain}`,
+    `再出現: ${formatTradeCount(item.appearanceCount)}回｜最新Confidence: ${formatConfidence(item.finalConfidence)}`
+  ].join("\n");
+}
+
+function formatReviewList(items, fallback, seen = new Set()) {
   if (!items || items.length === 0) {
     return fallback;
   }
 
-  return truncate(items.map(formatReviewToken).join("\n\n"), 1024);
+  return truncate(
+    items
+      .map((item) => {
+        if (seen.has(item.address)) {
+          return formatReviewTokenSummary(item);
+        }
+
+        seen.add(item.address);
+        return formatReviewTokenDetail(item);
+      })
+      .join("\n\n"),
+    1000
+  );
 }
 
 function createReviewEmbed(review) {
@@ -539,6 +648,9 @@ function createReviewEmbed(review) {
       `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
       `mature条件を満たした件数: ${stats.matureMatchedCount === null || stats.matureMatchedCount === undefined ? "対象外" : `${formatTradeCount(stats.matureMatchedCount)}件`}`,
       `新しすぎて除外: ${stats.matureExcludedTooNewCount === null || stats.matureExcludedTooNewCount === undefined ? "対象外" : `${formatTradeCount(stats.matureExcludedTooNewCount)}件`}`,
+      `OHLCV取得成功: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvSuccessCount ?? 0)} / ${formatTradeCount(stats.ohlcvCheckedCount ?? 0)}件` : "matureレビューで確認"}`,
+      `最大上昇率計算可能: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvReadyCount ?? 0)}件` : "matureレビューで確認"}`,
+      `OHLCV蓄積待ち: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvWaitingCount ?? 0)}件` : "matureレビューで確認"}`,
       `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
       `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
       `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
@@ -578,11 +690,208 @@ function createReviewEmbed(review) {
   return embed;
 }
 
+function createReviewEmbedClean(review) {
+  const stats = review.stats || {};
+  const confidenceCounts = stats.confidenceCounts || {};
+  const seen = new Set();
+  const embed = new EmbedBuilder()
+    .setColor(0x95d5b2)
+    .setTitle("しえすたん Signal Review")
+    .setDescription("過去のAlpha Radarシグナルを初回検出基準で答え合わせしますにゃ。投資助言ではないにゃ。")
+    .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "レビュー概要",
+    value: [
+      `対象期間: ${stats.reviewWindow || NO_DATA}`,
+      `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
+      `mature条件を満たした件数: ${stats.matureMatchedCount === null || stats.matureMatchedCount === undefined ? "対象外" : `${formatTradeCount(stats.matureMatchedCount)}件`}`,
+      `新しすぎて除外: ${stats.matureExcludedTooNewCount === null || stats.matureExcludedTooNewCount === undefined ? "対象外" : `${formatTradeCount(stats.matureExcludedTooNewCount)}件`}`,
+      `OHLCV取得成功: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvSuccessCount ?? 0)} / ${formatTradeCount(stats.ohlcvCheckedCount ?? 0)}件` : "matureレビューで確認"}`,
+      `最大上昇率計算可能: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvReadyCount ?? 0)}件` : "matureレビューで確認"}`,
+      `OHLCV蓄積待ち: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvWaitingCount ?? 0)}件` : "matureレビューで確認"}`,
+      `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
+      `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
+      `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
+      `評価可能: ${formatTradeCount(stats.evaluableCount ?? 0)}件`,
+      `評価保留: ${formatTradeCount(stats.pendingCount ?? 0)}件`,
+      `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`
+    ].join("\n")
+  });
+
+  if ((stats.tokenCount ?? 0) === 0) {
+    embed.addFields({
+      name: "レビュー対象なし",
+      value: "まだ `!radar solana` の保存結果がないにゃ。先にAlpha Radarを実行してくださいにゃ。"
+    });
+    return embed;
+  }
+
+  embed.addFields(
+    {
+      name: "現在MCAP変化率 上位",
+      value: formatReviewList(review.topGainers, "評価できる上昇候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "初回検出後の最大価格上昇率 上位",
+      value: formatReviewList(review.topPriceGainers, "価格ベースで評価できる候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "現在MCAP変化率 下位",
+      value: formatReviewList(review.topLosers, "評価できる下落候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "再出現した候補",
+      value: formatReviewList(review.repeatedTokens, "同じトークンの再出現はまだありませんにゃ。", seen)
+    },
+    {
+      name: "注意点が多い候補",
+      value: formatReviewList(review.warningHeavy, "大きな注意点が多い候補はありませんにゃ。", seen)
+    }
+  );
+
+  return embed;
+}
+
+function formatReviewBriefWarnings(warnings) {
+  if (!warnings || warnings.length === 0) {
+    return NO_WARNINGS;
+  }
+
+  return warnings.slice(0, 2).join(" / ");
+}
+
+function formatReviewRankingItem(item, index) {
+  const symbol = item.symbol || UNKNOWN_SYMBOL;
+  const ohlcv = item.ohlcvPerformance || {};
+  const priceGain = ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留";
+
+  return [
+    `最大価格上昇率: **${priceGain}**`,
+    `最高Final: ${item.highestFinalScore ?? item.finalScore}/100｜Confidence: ${formatConfidence(item.finalConfidence)}`,
+    `再出現: ${formatTradeCount(item.appearanceCount)}回｜初回検出から: ${formatElapsed(item.detectedAgeMs)}`,
+    `チャート: [Dexscreener](https://dexscreener.com/solana/${item.address})`,
+    `注意: ${formatReviewBriefWarnings(item.warnings)}`
+  ].join("\n");
+}
+
+function createReviewSummaryEmbed(review) {
+  const stats = review.stats || {};
+  const ranked = (review.topPriceGainers || []).slice(0, 5);
+  const embed = new EmbedBuilder()
+    .setColor(0x95d5b2)
+    .setTitle("しえすたん Signal Review")
+    .setDescription("初回検出後の最大価格上昇率ランキングですにゃ。投資助言ではないにゃ。")
+    .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "レビュー概要",
+    value: [
+      `対象期間: ${stats.reviewWindow || NO_DATA}`,
+      `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
+      `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
+      `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
+      `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
+      `最大価格上昇率を計算できた件数: ${formatTradeCount(stats.ohlcvReadyCount ?? ranked.length)} / ${formatTradeCount(stats.tokenCount ?? 0)}件`
+    ].join("\n")
+  });
+
+  if (ranked.length === 0) {
+    embed.addFields({
+      name: "ランキングなし",
+      value: stats.matureCondition
+        ? "価格ベースの最大上昇率を計算できる候補はまだありませんにゃ。"
+        : "`--mature 1h` や `--mature 4h` を付けるとOHLCVで確認できますにゃ。"
+    });
+    return embed;
+  }
+
+  ranked.forEach((item, index) => {
+    embed.addFields({
+      name: `${index + 1}位  ${item.symbol || UNKNOWN_SYMBOL}`,
+      value: truncate(formatReviewRankingItem(item, index), 900)
+    });
+  });
+
+  return embed;
+}
+
+function createReviewDetailEmbed(review) {
+  const stats = review.stats || {};
+  const confidenceCounts = stats.confidenceCounts || {};
+  const seen = new Set();
+  const embed = new EmbedBuilder()
+    .setColor(0x95d5b2)
+    .setTitle("しえすたん Signal Review | Detail")
+    .setDescription("過去のAlpha Radarシグナルを初回検出基準で詳しく答え合わせしますにゃ。投資助言ではないにゃ。")
+    .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "レビュー概要",
+    value: [
+      `対象期間: ${stats.reviewWindow || NO_DATA}`,
+      `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
+      `mature条件を満たした件数: ${stats.matureMatchedCount === null || stats.matureMatchedCount === undefined ? "対象外" : `${formatTradeCount(stats.matureMatchedCount)}件`}`,
+      `新しすぎて除外: ${stats.matureExcludedTooNewCount === null || stats.matureExcludedTooNewCount === undefined ? "対象外" : `${formatTradeCount(stats.matureExcludedTooNewCount)}件`}`,
+      `OHLCV取得成功: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvSuccessCount ?? 0)} / ${formatTradeCount(stats.ohlcvCheckedCount ?? 0)}件` : "matureレビューで確認"}`,
+      `最大上昇率計算可能: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvReadyCount ?? 0)}件` : "matureレビューで確認"}`,
+      `OHLCV蓄積待ち: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvWaitingCount ?? 0)}件` : "matureレビューで確認"}`,
+      `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
+      `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
+      `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
+      `評価可能: ${formatTradeCount(stats.evaluableCount ?? 0)}件`,
+      `評価保留: ${formatTradeCount(stats.pendingCount ?? 0)}件`,
+      `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`
+    ].join("\n")
+  });
+
+  if ((stats.tokenCount ?? 0) === 0) {
+    embed.addFields({
+      name: "レビュー対象なし",
+      value: "まだ `!radar solana` の保存結果がないにゃ。先にAlpha Radarを実行してくださいにゃ。"
+    });
+    return embed;
+  }
+
+  embed.addFields(
+    {
+      name: "現在MCAP変化率 上位",
+      value: formatReviewList(review.topGainers, "評価できる上昇候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "初回検出後の最大価格上昇率 上位",
+      value: formatReviewList(review.topPriceGainers, "価格ベースで評価できる候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "現在MCAP変化率 下位",
+      value: formatReviewList(review.topLosers, "評価できる下落候補はまだありませんにゃ。", seen)
+    },
+    {
+      name: "再出現した候補",
+      value: formatReviewList(review.repeatedTokens, "同じトークンの再出現はまだありませんにゃ。", seen)
+    },
+    {
+      name: "注意点が多い候補",
+      value: formatReviewList(review.warningHeavy, "大きな注意点が多い候補はありませんにゃ。", seen)
+    }
+  );
+
+  return embed;
+}
+
+function createReviewEmbedReadable(review, options = {}) {
+  if (options.detail) {
+    return createReviewDetailEmbed(review);
+  }
+
+  return createReviewSummaryEmbed(review);
+}
+
 module.exports = {
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,
   createEarlySignalEmbed,
   createRadarEmbed,
-  createReviewEmbed
+  createReviewEmbed: createReviewEmbedReadable
 };

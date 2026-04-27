@@ -217,8 +217,25 @@ async function getTokenDexTrades({ chain, token }) {
   return extractRows(parsed);
 }
 
+async function getSolanaTokenOhlcv({ tokenAddress, timeframe = "1h" }) {
+  const parsed = await runNansenJson([
+    "research",
+    "token",
+    "ohlcv",
+    "--chain",
+    "solana",
+    "--token",
+    tokenAddress,
+    "--timeframe",
+    timeframe
+  ]);
+
+  return extractRows(parsed);
+}
+
 module.exports = {
   getNansenVersion,
+  getSolanaTokenOhlcv,
   getSolanaSmartMoneyDexTrades,
   getSolanaSmartMoneyDexTradesRest,
   getSolanaSmartMoneyNetflow,
