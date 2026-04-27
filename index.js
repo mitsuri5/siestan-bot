@@ -7,11 +7,13 @@ const {
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,
-  createEarlySignalEmbed
+  createEarlySignalEmbed,
+  createRadarEmbed
 } = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
+const { runSolanaRadar } = require("./src/radar");
 const { scoreTokens } = require("./src/scoring");
-const { saveDiscoveryResult, saveScanResult } = require("./src/storage");
+const { saveDiscoveryResult, saveRadarResult, saveScanResult } = require("./src/storage");
 
 const token = process.env.DISCORD_BOT_TOKEN;
 
@@ -84,6 +86,7 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
         { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。" },
+        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -147,6 +150,29 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to run Solana discovery:", error);
       await reply.edit("SolanaのG0 Discoveryに失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (message.content === "!radar solana") {
+    const reply = await message.reply("SolanaのAlpha Radarを実行中ですにゃ...");
+
+    try {
+      const radar = await runSolanaRadar();
+
+      await saveRadarResult({
+        chain: "solana",
+        results: radar.results,
+        stats: radar.stats
+      });
+
+      await reply.edit({
+        content: "",
+        embeds: [createRadarEmbed(radar.results, radar.stats)]
+      });
+    } catch (error) {
+      console.error("Failed to run Solana radar:", error);
+      await reply.edit("SolanaのAlpha Radarに失敗しましたにゃ。");
     }
     return;
   }

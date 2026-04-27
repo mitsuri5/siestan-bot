@@ -190,7 +190,7 @@ function scoreCandidate(candidate) {
   };
 }
 
-async function discoverSolanaCandidates() {
+async function discoverSolanaCandidates({ limit = 3 } = {}) {
   const rows = await getSolanaSmartMoneyDexTrades();
   const aggregated = aggregateDexTrades(rows);
   const enriched = await enrichCandidates(aggregated);
@@ -212,7 +212,7 @@ async function discoverSolanaCandidates() {
 
       return b.buyValueUsd - a.buyValueUsd;
     })
-    .slice(0, 3);
+    .slice(0, limit);
 }
 
 module.exports = {

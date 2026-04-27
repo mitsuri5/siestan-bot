@@ -2,7 +2,7 @@
 
 Node.js と discord.js を使った Discord Bot です。
 
-Discord で `!ping` と送ると、Bot が次のように返信します。
+Discord で `!ping` と送ると、Bot が次のように返します。
 
 ```text
 しえすたん起動中ですにゃ。Pong!
@@ -26,20 +26,22 @@ npm install
 `.env.example` を参考にして、`.env` ファイルを作ります。
 
 ```env
-DISCORD_BOT_TOKEN=ここに本物のDiscord Bot Tokenを入れる
-NANSEN_API_KEY=ここに本物のNansen API Keyを入れる
+DISCORD_BOT_TOKEN=your_discord_bot_token_here
+NANSEN_API_KEY=your_nansen_api_key_here
 ```
 
-本物の Token や API Key はコードや README に書かないでください。
+本物の Discord Bot Token や Nansen API Key は、コードや README に書かないでください。
 
 Nansen CLI を使う場合は、別途 Nansen CLI をインストールしてログインしてください。
 
 ```bash
 npm install -g nansen-cli
 nansen --version
+nansen login --human
 ```
 
-現時点の `!discover solana`、`!scan solana`、`!deep solana TOKEN_ADDRESS` は Nansen CLI を使います。`NANSEN_API_KEY` は、将来 REST API に切り替える場合に使うための設定です。
+現時点の `!discover solana`、`!radar solana`、`!scan solana`、`!deep solana TOKEN_ADDRESS` は Nansen CLI を使います。
+`NANSEN_API_KEY` は、将来 REST API に切り替える場合に使うための設定です。
 
 ## Discord Developer Portal 側の設定
 
@@ -72,16 +74,26 @@ Logged in as BotName#0000
 | `!ping` | Bot が起動中か確認します。 |
 | `!help` | 使えるコマンド一覧を Discord の Embed で表示します。 |
 | `!about` | しえすたんが、Nansen のオンチェーンデータを使ってアルトや Smart Money の動きを見守る Bot であることを説明します。 |
-| `!sleep` | 「むにゃ... 監視はしえすたんに任せて、お昼寝してていいですにゃ。」と返信します。 |
+| `!sleep` | お昼寝したいときのかわいい返事を返します。 |
 | `!nansen-test` | Node.js から Nansen CLI の `nansen --version` を実行し、接続できているかを Embed で表示します。 |
-| `!discover solana` | Smart Money DEX Trades から、Solana 上でSmart Moneyが直近で触っている候補を発見します。投資助言ではありません。 |
+| `!discover solana` | Smart Money DEX Trades から、Solana 上で Smart Money が直近で買っている候補を発見します。投資助言ではありません。 |
+| `!radar solana` | G0 Discovery の上位候補を Deep 分析まで通し、統合スコア付きの Early Signal 候補を表示します。投資助言ではありません。 |
 | `!scan solana` | Nansen CLI の Smart Money netflow を使って、Solana 上の流入候補をスキャンし、簡易スコア付きで上位3件を表示します。投資助言ではありません。 |
-| `!deep solana TOKEN_ADDRESS` | 候補トークンを Flow Intelligence、Token Holders、DEX Trades で深掘りし、4-Gate形式の分析を表示します。投資助言ではありません。 |
+| `!deep solana TOKEN_ADDRESS` | 候補トークンを Flow Intelligence、Token Holders、DEX Trades で深掘りし、4-Gate 形式の分析を表示します。投資助言ではありません。 |
 
-## スキャン結果の保存
+## 保存されるデータ
 
-`!discover solana` の結果は `data/discoveries.json` に保存されます。
+スキャンや分析の結果はローカルの `data` フォルダに保存されます。
 
-`!scan solana` の結果は `data/signals.json` に保存されます。
+- `!discover solana` の結果: `data/discoveries.json`
+- `!radar solana` の結果: `data/radar.json`
+- `!scan solana` の結果: `data/signals.json`
 
-どちらもローカルの実行結果なので Git にはコミットしません。`data/.gitkeep` だけを置いて、`data` フォルダ自体は Git 管理できるようにしています。
+これらはローカルの実行結果なので Git にはコミットしません。
+`data/.gitkeep` だけを置いて、`data` フォルダ自体は Git 管理できるようにしています。
+
+## 注意
+
+しえすたんBotが表示する内容は、オンチェーンデータに基づいた調査補助情報です。
+トークンの購入、売却、保有をすすめるものではありません。
+最終判断は、必ず自分で調べたうえで行ってください。

@@ -326,9 +326,96 @@ function createDeepAnalysisEmbed(analysis) {
   return embed;
 }
 
+function createRadarEmbed(results, stats = {}) {
+  const confidenceCounts = stats.confidenceCounts || {};
+  const hasMediumOrHigher = stats.hasMediumOrHigher !== false;
+  const hasOnlyRisky = Boolean(stats.hasOnlyRisky);
+  const cautionText = hasMediumOrHigher
+    ? ""
+    : "\n\n今回は medium 以上の候補はありませんでしたにゃ。参考候補として risky / low を表示しているにゃ。";
+  const embed = new EmbedBuilder()
+    .setColor(0xf2a65a)
+    .setTitle(hasOnlyRisky ? "しえすたん Alpha Radar | 参考候補" : "しえすたん Alpha Radar")
+    .setDescription(
+      `G0 DiscoveryからDeep分析まで通した統合レーダーですにゃ。投資助言ではないにゃ。${cautionText}`
+    )
+    .setTimestamp(new Date());
+
+  embed.addFields({
+    name: "スキャン概要",
+    value: [
+      `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
+      `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
+      `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
+      `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`
+    ].join("\n")
+  });
+
+  if (results.length === 0) {
+    embed.addFields({
+      name: "候補なし",
+      value: "今回のRadarでは表示できる候補が見つかりませんでしたにゃ。"
+    });
+    return embed;
+  }
+
+  results.slice(0, 3).forEach((result, index) => {
+    const discovery = result.discovery || {};
+    const analysis = result.analysis || {};
+    const tokenInfo = analysis.tokenInfo || {};
+    const netflow = analysis.netflowToken || {};
+    const flow = analysis.flow || {};
+    const dexTrades = analysis.dexTrades || {};
+    const symbol = tokenInfo.symbol || discovery.symbol || UNKNOWN_SYMBOL;
+    const g0Notes = formatList(result.g0Notes, NO_DATA);
+    const deepNotes = formatList(result.deepNotes, NO_DATA);
+    const warnings = formatList(result.warnings, NO_WARNINGS);
+
+    embed.addFields({
+      name: `${index + 1}位 ${symbol} | Final ${result.finalScore}/100${result.finalConfidence === "risky" ? " | 参考候補" : ""}`,
+      value: truncate(
+        [
+          `Confidence **${formatConfidence(result.finalConfidence)}**`,
+          `G0 Score: **${discovery.score ?? NO_DATA}/100**｜Deep Score: **${analysis.score ?? NO_DATA}/100**`,
+          "",
+          "**基本情報**",
+          `MCAP: **${formatUsd(tokenInfo.marketCapUsd || discovery.marketCapUsd)}**`,
+          `流動性: **${formatUsd(tokenInfo.liquidityUsd || discovery.liquidityUsd)}**`,
+          `アドレス: ${shortenAddress(result.address)}`,
+          `チャート: [Dexscreener](https://dexscreener.com/solana/${result.address})`,
+          "",
+          "**フロー**",
+          `24h Netflow: ${formatUsd(netflow.net_flow_24h_usd)}`,
+          `7d Netflow: ${formatUsd(netflow.net_flow_7d_usd)}`,
+          `Flow Intelligence推定: ${formatUsd(flow.netFlowUsd)}`,
+          "",
+          "**DEX売買**",
+          `買い: **${formatTradeUsd(dexTrades.buyValueUsd ?? discovery.buyValueUsd)}**｜売り: **${formatTradeUsd(dexTrades.sellValueUsd ?? discovery.sellValueUsd)}**`,
+          "",
+          "**G0メモ**",
+          g0Notes,
+          "",
+          "**Deepメモ**",
+          deepNotes,
+          "",
+          "⚠️ **注意点**",
+          warnings,
+          "",
+          "**深掘り**",
+          `\`!deep solana ${result.address}\``
+        ].join("\n"),
+        1024
+      )
+    });
+  });
+
+  return embed;
+}
+
 module.exports = {
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,
-  createEarlySignalEmbed
+  createEarlySignalEmbed,
+  createRadarEmbed
 };

@@ -4,6 +4,7 @@ const path = require("path");
 const dataDir = path.join(__dirname, "..", "data");
 const signalsPath = path.join(dataDir, "signals.json");
 const discoveriesPath = path.join(dataDir, "discoveries.json");
+const radarPath = path.join(dataDir, "radar.json");
 
 async function readJsonArray(filePath) {
   try {
@@ -50,7 +51,25 @@ async function saveDiscoveryResult({ chain, discoveries }) {
   return discoveryResult;
 }
 
+async function saveRadarResult({ chain, results, stats }) {
+  await fs.mkdir(dataDir, { recursive: true });
+
+  const existingResults = await readJsonArray(radarPath);
+  const radarResult = {
+    radar_at: new Date().toISOString(),
+    chain,
+    stats,
+    results
+  };
+
+  existingResults.push(radarResult);
+  await fs.writeFile(radarPath, `${JSON.stringify(existingResults, null, 2)}\n`);
+
+  return radarResult;
+}
+
 module.exports = {
   saveDiscoveryResult,
+  saveRadarResult,
   saveScanResult
 };
