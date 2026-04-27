@@ -97,6 +97,48 @@ function parseReviewOptions(parts) {
   return options;
 }
 
+function parseWideOptions(parts) {
+  const options = {
+    limit: 200,
+    targetTokens: null,
+    wide: false
+  };
+  const args = parts.slice(2);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--wide") {
+      options.wide = true;
+      continue;
+    }
+
+    if (arg === "--limit" && options.wide) {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 500) {
+        return null;
+      }
+      options.limit = value;
+      index += 1;
+      continue;
+    }
+
+    if (arg === "--target-tokens" && options.wide) {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 700) {
+        return null;
+      }
+      options.targetTokens = value;
+      index += 1;
+      continue;
+    }
+
+    return null;
+  }
+
+  return options;
+}
+
 async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
   const [overview, ...cards] = embeds;
 
@@ -170,8 +212,8 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!about", value: "しえすたんについて説明します。" },
         { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
-        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで200件取得します。" },
-        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで200件取得します。" },
+        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide --limit 500` / `--wide --target-tokens 700` まで指定できます。" },
+        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide --limit 500` / `--wide --target-tokens 700` まで指定できます。" },
         { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--top 10` / `--stats` / `--detail` / `--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。`--detail` で詳細表示します。" }
@@ -217,8 +259,13 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (parts[0] === "!discover" && parts[1] === "solana" && (parts.length === 2 || parts[2] === "--wide")) {
-    const useWide = parts[2] === "--wide";
+  if (parts[0] === "!discover" && parts[1] === "solana") {
+    const wideOptions = parseWideOptions(parts);
+    if (!wideOptions) {
+      await message.reply("使い方: `!discover solana --wide --limit 500` または `!discover solana --wide --target-tokens 700`");
+      return;
+    }
+    const useWide = wideOptions.wide;
     const source = useWide ? "rest" : "cli";
     const reply = await message.reply(
       useWide
@@ -227,7 +274,11 @@ client.on(Events.MessageCreate, async (message) => {
     );
 
     try {
-      const discoveries = await discoverSolanaCandidates({ source });
+      const discoveries = await discoverSolanaCandidates({
+        dexTradeLimit: wideOptions.limit,
+        source,
+        targetTokens: wideOptions.targetTokens
+      });
 
       await saveDiscoveryResult({
         chain: "solana",
@@ -247,8 +298,13 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (parts[0] === "!radar" && parts[1] === "solana" && (parts.length === 2 || parts[2] === "--wide")) {
-    const useWide = parts[2] === "--wide";
+  if (parts[0] === "!radar" && parts[1] === "solana") {
+    const wideOptions = parseWideOptions(parts);
+    if (!wideOptions) {
+      await message.reply("使い方: `!radar solana --wide --limit 500` または `!radar solana --wide --target-tokens 700`");
+      return;
+    }
+    const useWide = wideOptions.wide;
     const source = useWide ? "rest" : "cli";
     const reply = await message.reply(
       useWide
@@ -257,7 +313,11 @@ client.on(Events.MessageCreate, async (message) => {
     );
 
     try {
-      const radar = await runSolanaRadar({ source });
+      const radar = await runSolanaRadar({
+        dexTradeLimit: wideOptions.limit,
+        source,
+        targetTokens: wideOptions.targetTokens
+      });
 
       await saveRadarResult({
         chain: "solana",

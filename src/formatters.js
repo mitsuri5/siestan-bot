@@ -392,12 +392,18 @@ function createDiscoveryEmbeds(discoveries) {
       name: "スキャン概要",
       value: [
         `データ取得元: ${stats.sourceLabel || "CLI"}`,
-        `Smart Money DEX Trades: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+        `取得モード: ${stats.mode || "limit"}`,
+        `目標トークン数: ${stats.targetTokens ? formatTradeCount(stats.targetTokens) : "なし"}`,
+        `取得したSM取引数: ${formatTradeCount(stats.actualRowCount ?? stats.dexTradeCount ?? 0)}`,
+        `集計後トークン数: ${formatTradeCount(stats.uniqueTokenCount ?? stats.g0CandidateCount ?? discoveries.length)}`,
+        `Token Info補完件数: ${formatTradeCount(stats.tokenInfoEnrichedCount ?? 0)}`,
         `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? discoveries.length)}`,
         `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)} / 3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
         `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)} / 流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
         `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`,
-        `実行時間: ${formatDuration(stats.durationMs)}`
+        `実行時間: ${formatDuration(stats.durationMs)}`,
+        `取得状態: ${stats.partialFailure ? "一部取得失敗" : "正常"}`,
+        `target到達: ${stats.targetTokens ? (stats.targetReached ? "はい" : "いいえ") : "対象外"}`
       ].join("\n")
     })
     .setTimestamp(new Date());
@@ -450,14 +456,20 @@ function createDiscoveryEmbed(discoveries) {
     name: "スキャン概要",
     value: [
       `データ取得元: ${stats.sourceLabel || "CLI"}`,
-      `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+      `取得モード: ${stats.mode || "limit"}`,
+      `目標トークン数: ${stats.targetTokens ? formatTradeCount(stats.targetTokens) : "なし"}`,
+      `取得したSM取引数: ${formatTradeCount(stats.actualRowCount ?? stats.dexTradeCount ?? 0)}`,
+      `集計後トークン数: ${formatTradeCount(stats.uniqueTokenCount ?? stats.g0CandidateCount ?? discoveries.length)}`,
+      `Token Info補完件数: ${formatTradeCount(stats.tokenInfoEnrichedCount ?? 0)}`,
       `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? discoveries.length)}`,
       `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)}`,
       `SM買い3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
       `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)}`,
       `流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
       `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`,
-      `実行時間: ${formatDuration(stats.durationMs)}`
+      `実行時間: ${formatDuration(stats.durationMs)}`,
+      `取得状態: ${stats.partialFailure ? "一部取得失敗" : "正常"}`,
+      `target到達: ${stats.targetTokens ? (stats.targetReached ? "はい" : "いいえ") : "対象外"}`
     ].join("\n")
   });
 
@@ -748,14 +760,20 @@ function createRadarEmbed(results, stats = {}) {
     name: "スキャン概要",
     value: [
       `データ取得元: ${stats.sourceLabel || "CLI"}`,
-      `Smart Money DEX Trades取得件数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+      `取得モード: ${stats.mode || "limit"}`,
+      `目標トークン数: ${stats.targetTokens ? formatTradeCount(stats.targetTokens) : "なし"}`,
+      `取得したSM取引数: ${formatTradeCount(stats.actualRowCount ?? stats.dexTradeCount ?? 0)}`,
+      `集計後トークン数: ${formatTradeCount(stats.uniqueTokenCount ?? stats.g0CandidateCount ?? 0)}`,
+      `Token Info補完件数: ${formatTradeCount(stats.tokenInfoEnrichedCount ?? 0)}`,
       `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
       `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)} / 3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
       `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)} / 流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
       `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
       `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
       `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`,
-      `実行時間: ${formatDuration(stats.durationMs)}`
+      `実行時間: ${formatDuration(stats.durationMs)}`,
+      `取得状態: ${stats.partialFailure ? "一部取得失敗" : "正常"}`,
+      `target到達: ${stats.targetTokens ? (stats.targetReached ? "はい" : "いいえ") : "対象外"}`
     ].join("\n")
   });
 
@@ -839,12 +857,18 @@ function createRadarEmbeds(results, stats = {}) {
       name: "スキャン概要",
       value: [
         `データ取得元: ${stats.sourceLabel || "CLI"}`,
-        `Smart Money DEX Trades: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+        `取得モード: ${stats.mode || "limit"}`,
+        `目標トークン数: ${stats.targetTokens ? formatTradeCount(stats.targetTokens) : "なし"}`,
+        `取得したSM取引数: ${formatTradeCount(stats.actualRowCount ?? stats.dexTradeCount ?? 0)}`,
+        `集計後トークン数: ${formatTradeCount(stats.uniqueTokenCount ?? stats.g0CandidateCount ?? 0)}`,
+        `Token Info補完件数: ${formatTradeCount(stats.tokenInfoEnrichedCount ?? 0)}`,
         `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
         `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
         `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
         `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`,
-        `実行時間: ${formatDuration(stats.durationMs)}`
+        `実行時間: ${formatDuration(stats.durationMs)}`,
+        `取得状態: ${stats.partialFailure ? "一部取得失敗" : "正常"}`,
+        `target到達: ${stats.targetTokens ? (stats.targetReached ? "はい" : "いいえ") : "対象外"}`
       ].join("\n")
     })
     .setTimestamp(new Date());

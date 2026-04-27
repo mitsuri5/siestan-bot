@@ -102,7 +102,7 @@ async function getSolanaSmartMoneyDexTrades() {
   });
 }
 
-async function getSolanaSmartMoneyDexTradesRest({ page = 1, perPage = 100 } = {}) {
+async function fetchSolanaSmartMoneyDexTradesRestPage({ page, perPage }) {
   const apiKey = process.env.NANSEN_API_KEY;
 
   if (!apiKey) {
@@ -152,6 +152,42 @@ async function getSolanaSmartMoneyDexTradesRest({ page = 1, perPage = 100 } = {}
     source: "rest",
     pagination: parsed.pagination || parsed.data?.pagination,
     rowCount: rows.length
+  });
+}
+
+async function getSolanaSmartMoneyDexTradesRest({ limit = 200, perPage = 100 } = {}) {
+  const rows = [];
+  const pageErrors = [];
+  let lastPagination = null;
+  const requestedLimit = Math.min(Math.max(Number(limit) || 200, 1), 500);
+  const pageSize = Math.min(Math.max(Number(perPage) || 100, 1), 100);
+  const maxPages = Math.ceil(requestedLimit / pageSize);
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    try {
+      const pageRows = await fetchSolanaSmartMoneyDexTradesRestPage({ page, perPage: pageSize });
+      const pagination = pageRows._meta?.pagination || {};
+      lastPagination = pagination;
+      rows.push(...pageRows);
+
+      if (pagination.is_last_page || rows.length >= requestedLimit) {
+        break;
+      }
+    } catch (error) {
+      pageErrors.push({ page, message: error.message });
+      break;
+    }
+  }
+
+  const limitedRows = rows.slice(0, requestedLimit);
+  return attachMeta(limitedRows, {
+    source: "rest",
+    pagination: lastPagination,
+    requestedLimit,
+    actualRowCount: limitedRows.length,
+    pageErrors,
+    partialFailure: pageErrors.length > 0,
+    rowCount: limitedRows.length
   });
 }
 
@@ -237,6 +273,7 @@ module.exports = {
   getNansenVersion,
   getSolanaTokenOhlcv,
   getSolanaSmartMoneyDexTrades,
+  fetchSolanaSmartMoneyDexTradesRestPage,
   getSolanaSmartMoneyDexTradesRest,
   getSolanaSmartMoneyNetflow,
   getTokenFlowIntelligence,

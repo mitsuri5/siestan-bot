@@ -83,8 +83,16 @@ function createStats({ discoveries, analyzedResults, displayedResults, durationM
   return {
     source: discoveries.stats?.source || "cli",
     sourceLabel: discoveries.stats?.sourceLabel || "CLI",
+    mode: discoveries.stats?.mode || "limit",
+    requestedLimit: discoveries.stats?.requestedLimit || discoveries.stats?.dexTradeCount || 0,
+    targetReached: Boolean(discoveries.stats?.targetReached),
+    targetTokens: discoveries.stats?.targetTokens || null,
+    actualRowCount: discoveries.stats?.actualRowCount || discoveries.stats?.dexTradeCount || 0,
     dexTradeCount: discoveries.stats?.dexTradeCount || 0,
-    g0CandidateCount: discoveries.length,
+    uniqueTokenCount: discoveries.stats?.uniqueTokenCount || 0,
+    tokenInfoEnrichedCount: discoveries.stats?.tokenInfoEnrichedCount || 0,
+    partialFailure: Boolean(discoveries.stats?.partialFailure),
+    g0CandidateCount: discoveries.stats?.g0CandidateCount || discoveries.length,
     buyCountAtLeast2: discoveries.stats?.buyCountAtLeast2 || 0,
     buyCountAtLeast3: discoveries.stats?.buyCountAtLeast3 || 0,
     withMarketCap: discoveries.stats?.withMarketCap || 0,
@@ -173,9 +181,9 @@ function combineScores(discovery, analysis) {
   };
 }
 
-async function runSolanaRadar({ source = "cli" } = {}) {
+async function runSolanaRadar({ dexTradeLimit = 200, source = "cli", targetTokens = null } = {}) {
   const startedAt = Date.now();
-  const discoveries = await discoverSolanaCandidates({ limit: 5, source });
+  const discoveries = await discoverSolanaCandidates({ dexTradeLimit, limit: 5, source, targetTokens });
   const analyzedResults = [];
 
   for (const discovery of discoveries) {

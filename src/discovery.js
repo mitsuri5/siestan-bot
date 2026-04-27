@@ -1,4 +1,9 @@
-const { getSolanaSmartMoneyDexTrades, getSolanaSmartMoneyDexTradesRest, getTokenInfo } = require("./nansen");
+const {
+  fetchSolanaSmartMoneyDexTradesRestPage,
+  getSolanaSmartMoneyDexTrades,
+  getSolanaSmartMoneyDexTradesRest,
+  getTokenInfo
+} = require("./nansen");
 
 const QUOTE_TOKENS = new Set([
   "So11111111111111111111111111111111111111112",
@@ -72,6 +77,50 @@ function aggregateDexTrades(rows) {
   return Array.from(candidates.values()).filter((candidate) => candidate.buyCount > 0);
 }
 
+async function getDexTradesByTargetTokens({ maxTrades = 3000, targetTokens }) {
+  const rows = [];
+  const pageErrors = [];
+  let lastPagination = null;
+  let targetReached = false;
+  const pageSize = 100;
+  const maxPages = Math.ceil(maxTrades / pageSize);
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    try {
+      const pageRows = await fetchSolanaSmartMoneyDexTradesRestPage({ page, perPage: pageSize });
+      lastPagination = pageRows._meta?.pagination || null;
+      rows.push(...pageRows);
+
+      const aggregated = aggregateDexTrades(rows);
+      if (aggregated.length >= targetTokens) {
+        targetReached = true;
+        break;
+      }
+
+      if (lastPagination?.is_last_page || rows.length >= maxTrades) {
+        break;
+      }
+    } catch (error) {
+      pageErrors.push({ page, message: error.message });
+      break;
+    }
+  }
+
+  const limitedRows = rows.slice(0, maxTrades);
+  return attachRowsMeta(limitedRows, {
+    actualRowCount: limitedRows.length,
+    maxTrades,
+    mode: "target tokens",
+    pageErrors,
+    pagination: lastPagination,
+    partialFailure: pageErrors.length > 0,
+    requestedLimit: maxTrades,
+    source: "rest",
+    targetReached,
+    targetTokens
+  });
+}
+
 function summarizeTokenInfo(info) {
   const details = info.token_details || {};
   const metrics = info.spot_metrics || {};
@@ -86,12 +135,13 @@ function summarizeTokenInfo(info) {
   };
 }
 
-async function enrichCandidates(candidates) {
+async function enrichCandidates(candidates, enrichLimit = 30) {
   const topCandidates = candidates
     .sort((a, b) => b.buyValueUsd - a.buyValueUsd)
-    .slice(0, 8);
-
-  const enriched = [];
+    .slice(0, enrichLimit);
+  const enrichAddresses = new Set(topCandidates.map((candidate) => candidate.address));
+  const enrichedByAddress = new Map();
+  let enrichedCount = 0;
 
   for (const candidate of topCandidates) {
     try {
@@ -102,7 +152,7 @@ async function enrichCandidates(candidates) {
         })
       );
 
-      enriched.push({
+      enrichedByAddress.set(candidate.address, {
         ...candidate,
         name: info.name || candidate.name,
         symbol: info.symbol || candidate.symbol,
@@ -111,16 +161,28 @@ async function enrichCandidates(candidates) {
         liquidityUsd: info.liquidityUsd,
         holderCount: info.holderCount
       });
+      enrichedCount += 1;
     } catch (error) {
       console.error("Failed to enrich discovery candidate:", candidate.address, error);
-      enriched.push({
+      enrichedByAddress.set(candidate.address, {
         ...candidate,
         warnings: [...candidate.warnings, "Token infoを取得できませんでしたにゃ"]
       });
     }
   }
 
-  return enriched;
+  const result = candidates.map((candidate) => (
+    enrichAddresses.has(candidate.address)
+      ? enrichedByAddress.get(candidate.address) || candidate
+      : candidate
+  ));
+
+  Object.defineProperty(result, "_meta", {
+    enumerable: false,
+    value: { enrichedCount }
+  });
+
+  return result;
 }
 
 function attachDiscoveryStats(discoveries, stats) {
@@ -132,9 +194,22 @@ function attachDiscoveryStats(discoveries, stats) {
   return discoveries;
 }
 
-async function getDexTradesBySource(source) {
+function attachRowsMeta(rows, meta) {
+  Object.defineProperty(rows, "_meta", {
+    enumerable: false,
+    value: meta
+  });
+
+  return rows;
+}
+
+async function getDexTradesBySource(source, { dexTradeLimit = 200, targetTokens = null } = {}) {
   if (source === "rest") {
-    return getSolanaSmartMoneyDexTradesRest({ page: 1, perPage: 200 });
+    if (targetTokens) {
+      return getDexTradesByTargetTokens({ targetTokens });
+    }
+
+    return getSolanaSmartMoneyDexTradesRest({ limit: dexTradeLimit, perPage: 100 });
   }
 
   return getSolanaSmartMoneyDexTrades();
@@ -239,11 +314,11 @@ function scoreCandidate(candidate) {
   };
 }
 
-async function discoverSolanaCandidates({ limit = 3, source = "cli" } = {}) {
+async function discoverSolanaCandidates({ dexTradeLimit = 200, limit = 3, source = "cli", targetTokens = null } = {}) {
   const startedAt = Date.now();
-  const rows = await getDexTradesBySource(source);
+  const rows = await getDexTradesBySource(source, { dexTradeLimit, targetTokens });
   const aggregated = aggregateDexTrades(rows);
-  const enriched = await enrichCandidates(aggregated);
+  const enriched = await enrichCandidates(aggregated, 30);
   const sourceLabel = source === "rest" ? "REST wide" : "CLI";
   const scoredCandidates = enriched
     .map(scoreCandidate)
@@ -272,7 +347,15 @@ async function discoverSolanaCandidates({ limit = 3, source = "cli" } = {}) {
   return attachDiscoveryStats(discoveries, {
     source,
     sourceLabel,
+    mode: rows._meta?.mode || "limit",
+    requestedLimit: rows._meta?.requestedLimit || rows.length,
+    targetReached: Boolean(rows._meta?.targetReached),
+    targetTokens: rows._meta?.targetTokens || null,
+    actualRowCount: rows._meta?.actualRowCount || rows.length,
     dexTradeCount: rows.length,
+    uniqueTokenCount: aggregated.length,
+    tokenInfoEnrichedCount: enriched._meta?.enrichedCount || 0,
+    partialFailure: Boolean(rows._meta?.partialFailure),
     g0CandidateCount: scoredCandidates.length,
     buyCountAtLeast2: breakdown.buyCountAtLeast2,
     buyCountAtLeast3: breakdown.buyCountAtLeast3,
