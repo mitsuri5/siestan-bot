@@ -18,6 +18,22 @@ function formatUsd(value) {
   }).format(number);
 }
 
+function formatSignedUsd(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number === 0) {
+    return NO_DATA;
+  }
+
+  const formatted = new Intl.NumberFormat("en-US", {
+    currency: "USD",
+    maximumFractionDigits: 0,
+    notation: Math.abs(number) >= 1000000 ? "compact" : "standard",
+    style: "currency"
+  }).format(Math.abs(number));
+
+  return `${number > 0 ? "+" : "-"}${formatted}`;
+}
+
 function formatTradeUsd(value) {
   const number = Number(value);
   if (!Number.isFinite(number)) {
@@ -167,6 +183,40 @@ function formatGate(passed) {
   return passed ? "通過" : "要監視";
 }
 
+function formatDeepJudgement(analysis, netflow, dexTrades) {
+  const confidence = analysis.confidence;
+  const netFlow24h = Number(netflow.net_flow_24h_usd);
+  const netFlow7d = Number(netflow.net_flow_7d_usd);
+  const buyValue = Number(dexTrades.buyValueUsd);
+  const sellValue = Number(dexTrades.sellValueUsd);
+  const warnings = analysis.warnings || [];
+  const signals = [];
+
+  if (confidence === "high") {
+    signals.push("深掘りでも強めですにゃ");
+  } else if (confidence === "low" || confidence === "risky") {
+    signals.push("深掘りでは慎重寄りですにゃ");
+  } else {
+    signals.push("深掘りでは要監視ですにゃ");
+  }
+
+  if (Number.isFinite(netFlow24h) && Number.isFinite(netFlow7d) && netFlow24h > 0 && netFlow7d > 0) {
+    signals.push("Smart Moneyフローは強めですにゃ");
+  } else if (Number.isFinite(netFlow7d) && netFlow7d < 0) {
+    signals.push("流入継続は未確認ですにゃ");
+  }
+
+  if (Number.isFinite(buyValue) && Number.isFinite(sellValue) && sellValue > buyValue) {
+    signals.push("直近DEX売買は売り優勢ですにゃ");
+  }
+
+  if (warnings.some((warning) => String(warning).includes("netflow上位には未検出"))) {
+    signals.push("Smart Money netflow上位には未検出ですにゃ");
+  }
+
+  return signals.slice(0, 3).join("。");
+}
+
 function formatConfidence(confidence) {
   const labels = {
     high: "high（高め）",
@@ -291,7 +341,7 @@ function createTokenCardEmbed({
     .setDescription(
       [
         `Chain: \`${chain}\` | Age: \`${tokenAgeDays ? `${formatNumber(tokenAgeDays)}d` : NO_DATA}\``,
-        `CA: \`${shortenAddress(address)}\``
+        `CA: \`${address || NO_DATA}\``
       ].join("\n")
     )
     .setTimestamp(new Date());
@@ -505,6 +555,75 @@ function createEarlySignalEmbed(signals) {
 }
 
 function createDeepAnalysisEmbed(analysis) {
+  const tokenInfo = analysis.tokenInfo || {};
+  const netflow = analysis.netflowToken || {};
+  const holders = analysis.holders || {};
+  const dexTrades = analysis.dexTrades || {};
+  const gates = analysis.gates || {};
+  const symbol = tokenInfo.symbol || netflow.token_symbol || UNKNOWN_SYMBOL;
+  const marketCapUsd = tokenInfo.marketCapUsd || netflow.market_cap_usd;
+  const sellDominant = Number(dexTrades.sellValueUsd) > Number(dexTrades.buyValueUsd);
+
+  const embed = new EmbedBuilder()
+    .setColor(0xffd166)
+    .setTitle(`しえすたん Deep Radar | ${symbol}`.slice(0, 256))
+    .setDescription(
+      [
+        "追加データで深掘りした診断結果ですにゃ。投資助言ではないにゃ。",
+        `Chain: \`${analysis.chain || "solana"}\``,
+        `CA: \`${analysis.tokenAddress || NO_DATA}\``
+      ].join("\n")
+    )
+    .setTimestamp(new Date());
+
+  const imageUrl = getTokenImageUrl(tokenInfo);
+  if (imageUrl) {
+    embed.setThumbnail(imageUrl);
+  }
+
+  addInlineField(embed, "🧪 Deep判定", `${analysis.score ?? NO_DATA}/100｜${formatConfidence(analysis.confidence)}`);
+  embed.addFields({
+    name: "しえすたん判定",
+    value: truncate(formatDeepJudgement(analysis, netflow, dexTrades), 500),
+    inline: false
+  });
+  addInlineField(
+    embed,
+    "🌊 SM Flow",
+    `24h: ${formatSignedUsd(netflow.net_flow_24h_usd)} / 7d: ${formatSignedUsd(netflow.net_flow_7d_usd)} / 30d: ${formatSignedUsd(netflow.net_flow_30d_usd)}`
+  );
+  addInlineField(
+    embed,
+    "💸 Deep DEX売買",
+    `買い ${formatTradeUsd(dexTrades.buyValueUsd)} / 売り ${formatTradeUsd(dexTrades.sellValueUsd)}${sellDominant ? " / 売り優勢" : ""}`
+  );
+  addInlineField(
+    embed,
+    "🚦 Deepチェック",
+    `資金流入: ${formatGate(gates.g1FlowSignal)} / 買い手の質: ${formatGate(gates.g2BuyerQuality)} / ホルダー状況: ${formatGate(gates.g3HolderConviction)} / リスク確認: ${formatGate(gates.g4RiskCheck)}`
+  );
+  addInlineField(embed, "💧 Liquidity", formatUsd(tokenInfo.liquidityUsd));
+  addInlineField(embed, "💰 MCAP", formatUsd(marketCapUsd));
+  addInlineField(embed, "👥 Holders", formatHolders(tokenInfo.holderCount, holders.smartMoneyHolderCount));
+  addInlineField(embed, "📊 Chart", `[Dexscreener](https://dexscreener.com/solana/${analysis.tokenAddress})`);
+
+  embed.addFields(
+    {
+      name: "注意点",
+      value: truncate(formatList(analysis.warnings?.slice(0, 2), NO_WARNINGS), 500),
+      inline: false
+    },
+    {
+      name: "良い点",
+      value: truncate(formatList(analysis.good?.slice(0, 2)), 500),
+      inline: false
+    }
+  );
+
+  return embed;
+}
+
+function createDeepAnalysisDetailEmbed(analysis) {
   const tokenInfo = analysis.tokenInfo || {};
   const netflow = analysis.netflowToken || {};
   const gates = analysis.gates;
@@ -905,6 +1024,71 @@ function formatReviewList(items, fallback, seen = new Set()) {
   );
 }
 
+function formatReasonCounts(counts) {
+  const entries = Object.entries(counts || {});
+  if (entries.length === 0) {
+    return NO_DATA;
+  }
+
+  return entries.map(([reason, count]) => `${reason} ${formatTradeCount(count)}件`).join(" / ");
+}
+
+function formatRankingExcludedList(items) {
+  if (!items || items.length === 0) {
+    return "ランキング対象外の候補はありませんにゃ。";
+  }
+
+  return truncate(
+    items
+      .slice(0, 10)
+      .map((item) => `${item.symbol || UNKNOWN_SYMBOL}: ${item.rankingExcludedReason || "理由不明"} / CA ${shortenAddress(item.address)}`)
+      .join("\n"),
+    1000
+  );
+}
+
+function formatPerformanceStats(stats) {
+  const performance = stats.performance || {};
+  return [
+    `対象トークン: ${formatTradeCount(performance.tokenCount ?? 0)}件`,
+    `1.5倍以上: ${formatTradeCount(performance.gain1_5xCount ?? 0)}件`,
+    `2倍以上: ${formatTradeCount(performance.gain2xCount ?? 0)}件`,
+    `3倍以上: ${formatTradeCount(performance.gain3xCount ?? 0)}件`,
+    `5倍以上: ${formatTradeCount(performance.gain5xCount ?? 0)}件`,
+    `10倍以上: ${formatTradeCount(performance.gain10xCount ?? 0)}件`,
+    `最大上昇率: ${performance.maxGainPct === null || performance.maxGainPct === undefined ? NO_DATA : formatSignedPercent(performance.maxGainPct)}`,
+    `中央値: ${performance.medianGainPct === null || performance.medianGainPct === undefined ? NO_DATA : formatSignedPercent(performance.medianGainPct)}`,
+    `平均: ${performance.averageGainPct === null || performance.averageGainPct === undefined ? NO_DATA : formatSignedPercent(performance.averageGainPct)}`,
+    `計算不可: ${formatTradeCount(stats.rankingExcludedCount ?? 0)}件`
+  ].join("\n");
+}
+
+function createReviewStatsEmbed(review) {
+  const stats = review.stats || {};
+  const embed = new EmbedBuilder()
+    .setColor(0x95d5b2)
+    .setTitle("しえすたん Signal Review | Stats")
+    .setDescription("初回検出後の最大価格上昇率で集計した検出成績ですにゃ。投資助言ではないにゃ。")
+    .addFields(
+      {
+        name: "集計条件",
+        value: [
+          `対象期間: ${stats.reviewWindow || NO_DATA}`,
+          `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
+          `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
+          `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`
+        ].join("\n")
+      },
+      {
+        name: "しえすたん検出成績",
+        value: formatPerformanceStats(stats)
+      }
+    )
+    .setTimestamp(new Date());
+
+  return embed;
+}
+
 function createReviewEmbed(review) {
   const stats = review.stats || {};
   const confidenceCounts = stats.confidenceCounts || {};
@@ -924,6 +1108,11 @@ function createReviewEmbed(review) {
       `OHLCV取得成功: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvSuccessCount ?? 0)} / ${formatTradeCount(stats.ohlcvCheckedCount ?? 0)}件` : "matureレビューで確認"}`,
       `最大上昇率計算可能: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvReadyCount ?? 0)}件` : "matureレビューで確認"}`,
       `OHLCV蓄積待ち: ${stats.matureCondition ? `${formatTradeCount(stats.ohlcvWaitingCount ?? 0)}件` : "matureレビューで確認"}`,
+      `ランキング対象外: ${formatTradeCount(stats.rankingExcludedCount ?? 0)}件`,
+      `対象外理由: ${formatReasonCounts(stats.rankingExcludedReasons)}`,
+      "",
+      "しえすたん検出成績",
+      formatPerformanceStats(stats),
       `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
       `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
       `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
@@ -1020,6 +1209,10 @@ function createReviewEmbedClean(review) {
     {
       name: "注意点が多い候補",
       value: formatReviewList(review.warningHeavy, "大きな注意点が多い候補はありませんにゃ。", seen)
+    },
+    {
+      name: "ランキング対象外",
+      value: formatRankingExcludedList(review.rankingExcluded)
     }
   );
 
@@ -1054,7 +1247,7 @@ function formatReviewRankingItem(item, index) {
 
 function createReviewSummaryEmbed(review) {
   const stats = review.stats || {};
-  const ranked = (review.topPriceGainers || []).slice(0, 5);
+  const ranked = (review.topPriceGainers || []).slice(0, stats.topLimit || 5);
   const embed = new EmbedBuilder()
     .setColor(0x95d5b2)
     .setTitle("しえすたん Signal Review")
@@ -1065,20 +1258,18 @@ function createReviewSummaryEmbed(review) {
     name: "レビュー概要",
     value: [
       `対象期間: ${stats.reviewWindow || NO_DATA}`,
-      `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
-      `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
       `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
       `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,
-      `最大価格上昇率を計算できた件数: ${formatTradeCount(stats.ohlcvReadyCount ?? ranked.length)} / ${formatTradeCount(stats.tokenCount ?? 0)}件`
+      `計算成功: ${formatTradeCount(stats.priceEvaluableCount ?? ranked.length)}件`,
+      `表示件数: ${formatTradeCount(stats.displayedCount ?? ranked.length)}件`,
+      `対象外件数: ${formatTradeCount(stats.rankingExcludedCount ?? 0)}件`
     ].join("\n")
   });
 
   if (ranked.length === 0) {
     embed.addFields({
       name: "ランキングなし",
-      value: stats.matureCondition
-        ? "価格ベースの最大上昇率を計算できる候補はまだありませんにゃ。"
-        : "`--mature 1h` や `--mature 4h` を付けるとOHLCVで確認できますにゃ。"
+      value: "価格ベースの最大上昇率を計算できる候補はまだありませんにゃ。"
     });
     return [embed];
   }
@@ -1182,10 +1373,15 @@ function createReviewEmbedReadable(review, options = {}) {
     return createReviewDetailEmbed(review);
   }
 
+  if (options.stats) {
+    return createReviewStatsEmbed(review);
+  }
+
   return createReviewSummaryEmbed(review);
 }
 
 module.exports = {
+  createDeepAnalysisDetailEmbed,
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,

@@ -4,6 +4,7 @@ const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js"
 const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnalysis");
 const { discoverSolanaCandidates } = require("./src/discovery");
 const {
+  createDeepAnalysisDetailEmbed,
   createDeepAnalysisEmbed,
   createDiscoveryEmbeds,
   createEarlySignalEmbed,
@@ -36,7 +37,9 @@ function parseReviewOptions(parts) {
   const options = {
     option: "default",
     mature: null,
-    detail: false
+    detail: false,
+    stats: false,
+    top: 5
   };
   const args = parts.slice(2);
 
@@ -60,6 +63,21 @@ function parseReviewOptions(parts) {
 
     if (arg === "--detail") {
       options.detail = true;
+      continue;
+    }
+
+    if (arg === "--stats") {
+      options.stats = true;
+      continue;
+    }
+
+    if (arg === "--top") {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 20) {
+        return null;
+      }
+      options.top = value;
+      index += 1;
       continue;
     }
 
@@ -154,9 +172,9 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
         { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで200件取得します。" },
         { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで200件取得します。" },
-        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--detail` / `--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
+        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--top 10` / `--stats` / `--detail` / `--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
-        { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
+        { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。`--detail` で詳細表示します。" }
       );
 
     await message.reply({ embeds: [helpEmbed] });
@@ -263,7 +281,7 @@ client.on(Events.MessageCreate, async (message) => {
   if (parts[0] === "!review" && parts[1] === "solana") {
     const reviewOptions = parseReviewOptions(parts);
     if (!reviewOptions) {
-      await message.reply("使い方: `!review solana --mature 4h`");
+      await message.reply("使い方: `!review solana --mature 4h --top 10`（topは1〜20）");
       return;
     }
 
@@ -271,11 +289,11 @@ client.on(Events.MessageCreate, async (message) => {
 
     try {
       const review = await reviewSolanaRadarSignals(reviewOptions);
-      const embed = createReviewEmbed(review, { detail: reviewOptions.detail });
+      const embed = createReviewEmbed(review, { detail: reviewOptions.detail, stats: reviewOptions.stats });
       const embeds = Array.isArray(embed) ? embed : [embed];
 
       try {
-        if (reviewOptions.detail || embeds.length <= 1) {
+        if (reviewOptions.detail || reviewOptions.stats || embeds.length <= 1) {
           await reply.edit({
             components: [],
             content: "",
@@ -286,7 +304,7 @@ client.on(Events.MessageCreate, async (message) => {
             message,
             reply,
             embeds,
-            (review.topPriceGainers || []).slice(0, 5).map((item) => item.address)
+            (review.topPriceGainers || []).slice(0, reviewOptions.top).map((item) => item.address)
           );
         }
       } catch (replyError) {
@@ -324,8 +342,9 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (parts[0] === "!deep") {
-    if (parts[1] !== "solana" || !parts[2] || parts.length !== 3) {
-      await message.reply("使い方: `!deep solana TOKEN_ADDRESS`");
+    const useDetail = parts[3] === "--detail";
+    if (parts[1] !== "solana" || !parts[2] || (parts.length !== 3 && !(parts.length === 4 && useDetail))) {
+      await message.reply("使い方: `!deep solana TOKEN_ADDRESS` または `!deep solana TOKEN_ADDRESS --detail`");
       return;
     }
 
@@ -341,7 +360,7 @@ client.on(Events.MessageCreate, async (message) => {
       const analysis = await analyzeSolanaTokenDeep(tokenAddress);
       await reply.edit({
         content: "",
-        embeds: [createDeepAnalysisEmbed(analysis)]
+        embeds: [useDetail ? createDeepAnalysisDetailEmbed(analysis) : createDeepAnalysisEmbed(analysis)]
       });
     } catch (error) {
       console.error("Failed to run deep Solana token analysis:", error);

@@ -12,6 +12,7 @@ const MATURE_DURATIONS = {
 };
 // 1m OHLCV can be very large and may exceed child_process maxBuffer, so normal review starts from 5m.
 const PRICE_TIMEFRAMES = ["5m", "15m", "1h"];
+const PRICE_FALLBACK_TIMEFRAME = "1m";
 const MARKET_CAP_TIMEFRAMES = ["5m", "15m", "1h"];
 const LEGACY_SINGLE_BUY_WARNING = "G0では単発買いなので、継続性はDeep分析で確認してくださいにゃ";
 const SINGLE_BUY_WARNING = "Smart Moneyの買いが1件だけなので、継続性はDeep分析で確認してくださいにゃ";
@@ -323,22 +324,25 @@ async function loadOhlcvPerformance(detection, currentInfo, shouldLoad) {
     if (pricePerformance?.failed && marketCapPerformance?.failed) {
       return {
         status: "failed",
+        priceStatus: "failed",
         candleCount: 0
       };
     }
 
-    const usablePricePerformance = pricePerformance?.failed ? null : pricePerformance;
+    const usablePricePerformance = pricePerformance?.failed || pricePerformance?.unavailableReason ? null : pricePerformance;
     const usableMarketCapPerformance = marketCapPerformance?.failed ? null : marketCapPerformance;
 
     if (!usablePricePerformance && !usableMarketCapPerformance) {
       return {
         status: "waiting",
+        priceStatus: pricePerformance?.failed ? "failed" : pricePerformance?.unavailableReason || "waiting",
         candleCount: 0
       };
     }
 
     return {
       status: "ready",
+      priceStatus: usablePricePerformance ? "ready" : pricePerformance?.failed ? "failed" : pricePerformance?.unavailableReason || "waiting",
       candleCount: (usablePricePerformance?.candleCount || 0) + (usableMarketCapPerformance?.candleCount || 0),
       baselineMarketCapUsd: usableMarketCapPerformance?.baselineMarketCapUsd || 0,
       usedOhlcvBaseline: Boolean(usableMarketCapPerformance?.usedOhlcvBaseline),
@@ -360,6 +364,7 @@ async function loadOhlcvPerformance(detection, currentInfo, shouldLoad) {
     console.error("Failed to load token OHLCV for review:", detection.address, error);
     return {
       status: "failed",
+      priceStatus: "failed",
       candleCount: 0
     };
   }
@@ -461,41 +466,91 @@ function selectMarketCapCandles(rows, detectedAtMs, timeframe) {
 
 async function loadBestPricePerformance(tokenAddress, detectedAtMs) {
   let hadError = false;
+  let hadCandles = false;
 
   for (const timeframe of PRICE_TIMEFRAMES) {
-    let rows;
-    try {
-      rows = await loadOhlcvRows(tokenAddress, timeframe);
-    } catch (error) {
+    const performance = await loadPricePerformanceForTimeframe(tokenAddress, detectedAtMs, timeframe);
+    if (performance.failed) {
       hadError = true;
-      console.error(`Failed to load ${timeframe} token OHLCV for review:`, tokenAddress, error);
       continue;
     }
-    const priceCandles = selectPriceCandles(rows, detectedAtMs, timeframe);
-    const baselineCandle = priceCandles.find((row) => row.baselinePriceUsd > 0);
-    const maxPriceCandle = priceCandles.reduce(
-      (best, row) => (row.priceHighUsd > best.priceHighUsd ? row : best),
-      priceCandles[0] || null
-    );
-    const latestPriceCandle = [...priceCandles].reverse().find((row) => row.priceCloseUsd > 0);
-    const baselinePriceUsd = baselineCandle?.baselinePriceUsd || 0;
-    const maxPriceUsd = maxPriceCandle?.priceHighUsd || 0;
+    if (performance.hadCandles) {
+      hadCandles = true;
+    }
+    if (performance.ready) {
+      return performance.ready;
+    }
+  }
 
-    if (priceCandles.length > 0 && baselinePriceUsd > 0 && maxPriceUsd > 0) {
-      return {
+  if (hadCandles) {
+    return {
+      unavailableReason: "no_price_data"
+    };
+  }
+
+  // TODO: Add an explicit --wick review mode if we need to inspect 1m wick spikes separately.
+  const fallback = await loadPricePerformanceForTimeframe(tokenAddress, detectedAtMs, PRICE_FALLBACK_TIMEFRAME, {
+    fallback: true
+  });
+  if (fallback.ready) {
+    return fallback.ready;
+  }
+
+  if (fallback.failed) {
+    return { unavailableReason: "1m_failed" };
+  }
+
+  if (hadError) {
+    return { failed: true };
+  }
+
+  return {
+    unavailableReason: fallback.hadCandles ? "no_price_data" : "no_candles"
+  };
+}
+
+async function loadPricePerformanceForTimeframe(tokenAddress, detectedAtMs, timeframe, { fallback = false } = {}) {
+  let rows;
+  try {
+    rows = await loadOhlcvRows(tokenAddress, timeframe);
+  } catch (error) {
+    console.error(`Failed to load ${timeframe} token OHLCV for review:`, tokenAddress, error);
+    return { failed: true };
+  }
+
+  const priceCandles = selectPriceCandles(rows, detectedAtMs, timeframe);
+  const baselineCandle = priceCandles.find((row) => row.baselinePriceUsd > 0);
+  const maxPriceCandle = priceCandles.reduce(
+    (best, row) => (row.priceHighUsd > best.priceHighUsd ? row : best),
+    priceCandles[0] || null
+  );
+  const latestPriceCandle = [...priceCandles].reverse().find((row) => row.priceCloseUsd > 0);
+  const baselinePriceUsd = baselineCandle?.baselinePriceUsd || 0;
+  const maxPriceUsd = maxPriceCandle?.priceHighUsd || 0;
+
+  if (priceCandles.length > 0 && baselinePriceUsd > 0 && maxPriceUsd > 0) {
+    return {
+      hadCandles: true,
+      ready: {
         candleCount: priceCandles.length,
-        timeframe,
-        baselineLabel: timeframe === "1h" ? "検出後最初の1h足（保守計算）" : `検出後最初の${timeframe}足`,
+        timeframe: fallback ? `${timeframe} fallback` : timeframe,
+        baselineLabel: fallback
+          ? `検出後最初の${timeframe}足 fallback`
+          : timeframe === "1h"
+            ? "検出後最初の1h足（保守計算）"
+            : `検出後最初の${timeframe}足`,
         baselinePriceUsd,
         latestPriceUsd: latestPriceCandle?.priceCloseUsd || 0,
         maxPriceUsd,
         maxPriceGainPct: (maxPriceUsd - baselinePriceUsd) / baselinePriceUsd,
         maxPriceReachedAt: new Date(maxPriceCandle.intervalStartMs).toISOString()
-      };
-    }
+      }
+    };
   }
 
-  return hadError ? { failed: true } : null;
+  return {
+    hadCandles: priceCandles.length > 0
+  };
 }
 
 async function loadBestMarketCapPerformance(tokenAddress, detectedAtMs, detection, currentInfo) {
@@ -542,17 +597,85 @@ async function loadBestMarketCapPerformance(tokenAddress, detectedAtMs, detectio
 function getTopPriceGainers(items) {
   return items
     .filter((item) => item.ohlcvPerformance.priceEvaluable)
-    .sort((a, b) => b.ohlcvPerformance.maxPriceGainPct - a.ohlcvPerformance.maxPriceGainPct)
-    .slice(0, 5);
+    .sort((a, b) =>
+      b.ohlcvPerformance.maxPriceGainPct - a.ohlcvPerformance.maxPriceGainPct ||
+      b.highestFinalScore - a.highestFinalScore ||
+      b.appearanceCount - a.appearanceCount
+    );
 }
 
-async function reviewSolanaRadarSignals({ option = "default", mature = null } = {}) {
+function getRankingExcluded(items) {
+  return items
+    .filter((item) => !item.ohlcvPerformance.priceEvaluable)
+    .map((item) => ({
+      ...item,
+      rankingExcludedReason: getRankingExcludedReason(item)
+    }));
+}
+
+function getRankingExcludedReason(item) {
+  const status = item.ohlcvPerformance.priceStatus || item.ohlcvPerformance.status;
+
+  if (status === "failed") {
+    return "OHLCV取得失敗";
+  }
+  if (status === "1m_failed") {
+    return "1m取得失敗";
+  }
+  if (status === "no_candles") {
+    return "検出後candleなし";
+  }
+  if (status === "no_price_data") {
+    return "価格データなし";
+  }
+  return "価格上昇率を計算できませんでした";
+}
+
+function countRankingExcludedReasons(items) {
+  const counts = {};
+
+  for (const item of items) {
+    const reason = getRankingExcludedReason(item);
+    counts[reason] = (counts[reason] || 0) + 1;
+  }
+
+  return counts;
+}
+
+function getPerformanceStats(items) {
+  const evaluable = items.filter((item) => item.ohlcvPerformance.priceEvaluable);
+  const gains = evaluable
+    .map((item) => item.ohlcvPerformance.maxPriceGainPct)
+    .filter((value) => Number.isFinite(value))
+    .sort((a, b) => a - b);
+  const sum = gains.reduce((total, value) => total + value, 0);
+  const midpoint = Math.floor(gains.length / 2);
+  const median = gains.length === 0
+    ? null
+    : gains.length % 2 === 0
+      ? (gains[midpoint - 1] + gains[midpoint]) / 2
+      : gains[midpoint];
+
+  return {
+    tokenCount: gains.length,
+    gain1_5xCount: gains.filter((gain) => gain >= 0.5).length,
+    gain2xCount: gains.filter((gain) => gain >= 1).length,
+    gain3xCount: gains.filter((gain) => gain >= 2).length,
+    gain5xCount: gains.filter((gain) => gain >= 4).length,
+    gain10xCount: gains.filter((gain) => gain >= 9).length,
+    maxGainPct: gains.length ? gains[gains.length - 1] : null,
+    medianGainPct: median,
+    averageGainPct: gains.length ? sum / gains.length : null
+  };
+}
+
+async function reviewSolanaRadarSignals({ option = "default", mature = null, top = 5 } = {}) {
   const radarRuns = await readRadarResults();
   const detections = collectRadarDetections(radarRuns, "solana");
   const selection = selectReviewDetections(detections, { option, mature });
   const tokens = groupDetectionsByToken(selection.detections);
   const reviewed = [];
-  const shouldLoadOhlcv = Boolean(mature);
+  const shouldLoadOhlcv = true;
 
   for (const token of tokens) {
     const currentInfo = await loadCurrentTokenInfo(token.address);
@@ -601,6 +724,14 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
   ).length;
   const ohlcvReadyCount = reviewed.filter((item) => item.ohlcvPerformance.status === "ready").length;
   const ohlcvWaitingCount = reviewed.filter((item) => item.ohlcvPerformance.status === "waiting").length;
+  const topPriceGainers = getTopPriceGainers(reviewed);
+  const topLimit = Math.min(Math.max(Number(top) || 5, 1), 20);
+  const priceEvaluableCount = topPriceGainers.length;
+  const rankingExcluded = getRankingExcluded(reviewed);
+  const ohlcvFailedCount = reviewed.filter((item) => item.ohlcvPerformance.priceStatus === "failed").length;
+  const oneMinuteFailedCount = reviewed.filter((item) => item.ohlcvPerformance.priceStatus === "1m_failed").length;
+  const noCandleCount = reviewed.filter((item) => item.ohlcvPerformance.priceStatus === "no_candles").length;
+  const noPriceDataCount = reviewed.filter((item) => item.ohlcvPerformance.priceStatus === "no_price_data").length;
 
   return {
     stats: {
@@ -614,6 +745,16 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
       ohlcvSuccessCount: shouldLoadOhlcv ? ohlcvSuccessCount : 0,
       ohlcvReadyCount: shouldLoadOhlcv ? ohlcvReadyCount : 0,
       ohlcvWaitingCount: shouldLoadOhlcv ? ohlcvWaitingCount : 0,
+      ohlcvFailedCount,
+      oneMinuteFailedCount,
+      noCandleCount,
+      noPriceDataCount,
+      priceEvaluableCount,
+      displayedCount: Math.min(topLimit, topPriceGainers.length),
+      rankingExcludedCount: reviewed.length - priceEvaluableCount,
+      rankingExcludedReasons: countRankingExcludedReasons(rankingExcluded),
+      topLimit,
+      performance: getPerformanceStats(reviewed),
       tokenCount: reviewed.length,
       evaluableCount,
       pendingCount,
@@ -621,7 +762,8 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
     },
     topGainers: getTopMovers(reviewed, "up"),
     topLosers: getTopMovers(reviewed, "down"),
-    topPriceGainers: getTopPriceGainers(reviewed),
+    topPriceGainers,
+    rankingExcluded,
     repeatedTokens: reviewed
       .filter((item) => item.appearanceCount > 1)
       .sort((a, b) => b.appearanceCount - a.appearanceCount)
