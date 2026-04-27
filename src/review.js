@@ -4,6 +4,14 @@ const { readRadarResults } = require("./storage");
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const CONFIDENCE_LEVELS = ["risky", "low", "medium", "high"];
 const REVIEW_LIMIT = 20;
+const MATURE_DURATIONS = {
+  "1h": 60 * 60 * 1000,
+  "4h": 4 * 60 * 60 * 1000,
+  "24h": 24 * 60 * 60 * 1000,
+  "7d": 7 * 24 * 60 * 60 * 1000
+};
+const LEGACY_SINGLE_BUY_WARNING = "G0では単発買いなので、継続性はDeep分析で確認してくださいにゃ";
+const SINGLE_BUY_WARNING = "Smart Moneyの買いが1件だけなので、継続性はDeep分析で確認してくださいにゃ";
 
 function toNumber(value) {
   const number = Number(value);
@@ -25,6 +33,22 @@ function getConfidenceCounts(items) {
   }
 
   return counts;
+}
+
+function normalizeWarning(warning) {
+  if (warning === LEGACY_SINGLE_BUY_WARNING) {
+    return SINGLE_BUY_WARNING;
+  }
+
+  return warning;
+}
+
+function normalizeWarnings(warnings) {
+  if (!Array.isArray(warnings)) {
+    return [];
+  }
+
+  return [...new Set(warnings.map(normalizeWarning).filter(Boolean))];
 }
 
 function getDetectedMarketCap(result) {
@@ -71,7 +95,7 @@ function getDetectedRecord(run, result, index) {
     deepDexBuyValueUsd: toNumber(dexTrades.buyValueUsd),
     deepDexSellValueUsd: toNumber(dexTrades.sellValueUsd),
     smartMoneyBuyCount: toNumber(discovery.buyCount),
-    warnings: Array.isArray(result.warnings) ? result.warnings : []
+    warnings: normalizeWarnings(result.warnings)
   };
 }
 
@@ -125,21 +149,23 @@ function getReviewWindow(option) {
   };
 }
 
-function selectReviewDetections(detections, option) {
+function selectReviewDetections(detections, { option, mature } = {}) {
+  const now = Date.now();
   const window = getReviewWindow(option);
   const sorted = [...detections].sort((a, b) => new Date(b.detectedAt) - new Date(a.detectedAt));
-  const filtered = sorted.filter(window.filter);
-
-  if (window.limit) {
-    return {
-      label: window.label,
-      detections: filtered.slice(0, window.limit)
-    };
-  }
+  const windowFiltered = sorted.filter(window.filter);
+  const matureMs = mature ? MATURE_DURATIONS[mature] : null;
+  const matureFiltered = matureMs
+    ? windowFiltered.filter((detection) => now - new Date(detection.detectedAt).getTime() >= matureMs)
+    : windowFiltered;
+  const finalDetections = window.limit ? matureFiltered.slice(0, window.limit) : matureFiltered;
 
   return {
     label: window.label,
-    detections: filtered
+    matureCondition: mature || null,
+    matureMatchedCount: mature ? matureFiltered.length : null,
+    matureExcludedTooNewCount: mature ? windowFiltered.length - matureFiltered.length : null,
+    detections: finalDetections
   };
 }
 
@@ -230,10 +256,10 @@ function getTopMovers(items, direction) {
   return sorted.slice(0, 3);
 }
 
-async function reviewSolanaRadarSignals({ option = "default" } = {}) {
+async function reviewSolanaRadarSignals({ option = "default", mature = null } = {}) {
   const radarRuns = await readRadarResults();
   const detections = collectRadarDetections(radarRuns, "solana");
-  const selection = selectReviewDetections(detections, option);
+  const selection = selectReviewDetections(detections, { option, mature });
   const tokens = groupDetectionsByToken(selection.detections);
   const reviewed = [];
 
@@ -249,6 +275,7 @@ async function reviewSolanaRadarSignals({ option = "default" } = {}) {
       detectedAt: detection.detectedAt,
       firstDetectedAt: token.first.detectedAt,
       latestDetectedAt: token.latest.detectedAt,
+      detectedAgeMs: Date.now() - new Date(token.latest.detectedAt).getTime(),
       appearanceCount: token.appearanceCount,
       finalScore: detection.finalScore,
       highestFinalScore: token.highestScore,
@@ -279,6 +306,9 @@ async function reviewSolanaRadarSignals({ option = "default" } = {}) {
       totalSignalCount: detections.length,
       reviewedSignalCount: selection.detections.length,
       reviewWindow: selection.label,
+      matureCondition: selection.matureCondition,
+      matureMatchedCount: selection.matureMatchedCount,
+      matureExcludedTooNewCount: selection.matureExcludedTooNewCount,
       tokenCount: reviewed.length,
       evaluableCount,
       pendingCount,

@@ -104,6 +104,28 @@ function formatDateTime(value) {
   });
 }
 
+function formatElapsed(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number < 0) {
+    return NO_DATA;
+  }
+
+  const totalMinutes = Math.floor(number / (60 * 1000));
+  const days = Math.floor(totalMinutes / (24 * 60));
+  const hours = Math.floor((totalMinutes % (24 * 60)) / 60);
+  const minutes = totalMinutes % 60;
+
+  if (days > 0) {
+    return `${days}日${hours}時間`;
+  }
+
+  if (hours > 0) {
+    return `${hours}時間${minutes}分`;
+  }
+
+  return `${minutes}分`;
+}
+
 function formatList(items, fallback = NO_DATA) {
   if (!items || items.length === 0) {
     return fallback;
@@ -488,6 +510,7 @@ function formatReviewToken(item) {
     `再出現: ${formatTradeCount(item.appearanceCount)}回`,
     `初回: ${formatDateTime(item.firstDetectedAt)}`,
     `最新: ${formatDateTime(item.latestDetectedAt)}`,
+    `検出から: ${formatElapsed(item.detectedAgeMs)}`,
     `注意点: ${formatList(item.warnings, NO_WARNINGS)}`
   ].join("\n");
 }
@@ -513,6 +536,9 @@ function createReviewEmbed(review) {
     name: "レビュー概要",
     value: [
       `対象期間: ${stats.reviewWindow || NO_DATA}`,
+      `mature条件: ${stats.matureCondition ? `検出から${stats.matureCondition}以上` : "なし"}`,
+      `mature条件を満たした件数: ${stats.matureMatchedCount === null || stats.matureMatchedCount === undefined ? "対象外" : `${formatTradeCount(stats.matureMatchedCount)}件`}`,
+      `新しすぎて除外: ${stats.matureExcludedTooNewCount === null || stats.matureExcludedTooNewCount === undefined ? "対象外" : `${formatTradeCount(stats.matureExcludedTooNewCount)}件`}`,
       `保存済み総シグナル数: ${formatTradeCount(stats.totalSignalCount ?? 0)}件`,
       `今回レビュー対象: ${formatTradeCount(stats.reviewedSignalCount ?? 0)}件`,
       `集約後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}件`,

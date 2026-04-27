@@ -32,6 +32,47 @@ const client = new Client({
   ]
 });
 
+function parseReviewOptions(parts) {
+  const options = {
+    option: "default",
+    mature: null
+  };
+  const args = parts.slice(2);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--all") {
+      options.option = "all";
+      continue;
+    }
+
+    if (arg === "--24h") {
+      options.option = "24h";
+      continue;
+    }
+
+    if (arg === "--7d") {
+      options.option = "7d";
+      continue;
+    }
+
+    if (arg === "--mature") {
+      const value = args[index + 1];
+      if (!["1h", "4h", "24h", "7d"].includes(value)) {
+        return null;
+      }
+      options.mature = value;
+      index += 1;
+      continue;
+    }
+
+    return null;
+  }
+
+  return options;
+}
+
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
@@ -89,7 +130,7 @@ client.on(Events.MessageCreate, async (message) => {
         { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
         { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide` 付きならREST APIで200件取得します。" },
         { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide` 付きならREST APIで200件取得します。" },
-        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--all` / `--24h` / `--7d` も使えます。" },
+        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
         { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
         { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。" }
       );
@@ -192,12 +233,17 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
-  if (parts[0] === "!review" && parts[1] === "solana" && (parts.length === 2 || ["--all", "--24h", "--7d"].includes(parts[2]))) {
-    const option = parts[2] ? parts[2].slice(2) : "default";
+  if (parts[0] === "!review" && parts[1] === "solana") {
+    const reviewOptions = parseReviewOptions(parts);
+    if (!reviewOptions) {
+      await message.reply("使い方: `!review solana --mature 4h`");
+      return;
+    }
+
     const reply = await message.reply("過去のAlpha Radarシグナルを答え合わせ中ですにゃ...");
 
     try {
-      const review = await reviewSolanaRadarSignals({ option });
+      const review = await reviewSolanaRadarSignals(reviewOptions);
 
       await reply.edit({
         content: "",
