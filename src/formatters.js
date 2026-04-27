@@ -178,6 +178,21 @@ function formatConfidence(confidence) {
   return labels[confidence] || NO_DATA;
 }
 
+function formatHolders(holderCount, smartMoneyHolderCount) {
+  const holders = formatNumber(holderCount);
+  const smartMoneyHolders = Number(smartMoneyHolderCount);
+
+  if (holders === NO_DATA) {
+    return NO_DATA;
+  }
+
+  if (Number.isFinite(smartMoneyHolders) && smartMoneyHolders > 0) {
+    return `${holders}（SM ${formatTradeCount(smartMoneyHolders)}）`;
+  }
+
+  return holders;
+}
+
 function getDiscoveryButtonLabel(discovery, index) {
   const symbolOrAddress = discovery.symbol || shortenAddress(discovery.address);
   return `${index + 1}位 ${symbolOrAddress}`.slice(0, 80);
@@ -192,6 +207,183 @@ function createDiscoveryComponents(discoveries) {
         .setStyle(ButtonStyle.Primary)
     )
   );
+}
+
+function createTokenCardComponents(address) {
+  if (!address) {
+    return [];
+  }
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`deep:solana:${address}`)
+        .setLabel("🔎 Deep分析")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setLabel("📊 Dexscreener")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://dexscreener.com/solana/${address}`)
+    )
+  ];
+}
+
+function addInlineField(embed, name, value) {
+  embed.addFields({
+    name,
+    value: truncate(String(value ?? NO_DATA), 250),
+    inline: true
+  });
+}
+
+function getTokenImageUrl(...sources) {
+  for (const source of sources) {
+    const url =
+      source?.image_url ||
+      source?.imageUrl ||
+      source?.image ||
+      source?.logo_url ||
+      source?.logoUrl ||
+      source?.logo ||
+      source?.icon_url ||
+      source?.iconUrl ||
+      source?.icon ||
+      source?.token_image ||
+      source?.tokenImage;
+
+    if (typeof url === "string" && /^https?:\/\//.test(url)) {
+      return url;
+    }
+  }
+
+  return null;
+}
+
+function createTokenCardEmbed({
+  address,
+  chain = "solana",
+  color = 0x6ec6ff,
+  confidence,
+  deepScore,
+  holderCount,
+  imageSources = [],
+  liquidityUsd,
+  maxPriceGain,
+  marketCapUsd,
+  mode = "signal",
+  name,
+  rank,
+  score,
+  smartMoneyHolderCount,
+  smartMoneyBuyCount,
+  smartMoneyBuyUsd,
+  smartMoneySellCount,
+  smartMoneySellUsd,
+  symbol,
+  tokenAgeDays,
+  warnings
+}) {
+  const titleSymbol = symbol || UNKNOWN_SYMBOL;
+  const titleName = name && name !== titleSymbol ? ` | ${name}` : "";
+  const embed = new EmbedBuilder()
+    .setColor(color)
+    .setTitle(`${rank ? `${rank}. ` : ""}${titleSymbol}${titleName}`.slice(0, 256))
+    .setDescription(
+      [
+        `Chain: \`${chain}\` | Age: \`${tokenAgeDays ? `${formatNumber(tokenAgeDays)}d` : NO_DATA}\``,
+        `CA: \`${shortenAddress(address)}\``
+      ].join("\n")
+    )
+    .setTimestamp(new Date());
+
+  const imageUrl = getTokenImageUrl(...imageSources);
+  if (imageUrl) {
+    embed.setThumbnail(imageUrl);
+  }
+
+  if (mode === "review") {
+    addInlineField(embed, "📈 最大価格上昇率", maxPriceGain || "評価保留");
+    addInlineField(embed, "⭐ 最高Final", `${score ?? NO_DATA}/100`);
+    addInlineField(embed, "🧭 Confidence", formatConfidence(confidence));
+    addInlineField(embed, "💧 Liquidity", formatUsd(liquidityUsd));
+    addInlineField(embed, "💰 MCAP", formatUsd(marketCapUsd));
+    addInlineField(embed, "👥 Holders", formatHolders(holderCount, smartMoneyHolderCount));
+    addInlineField(embed, "📊 Chart", `[Dexscreener](https://dexscreener.com/solana/${address})`);
+    addInlineField(embed, "🔎 Deep", "ボタンから実行");
+  } else {
+    addInlineField(embed, "⭐ Score", `${score ?? NO_DATA}/100`);
+    addInlineField(embed, "🧭 Confidence", formatConfidence(confidence));
+    addInlineField(embed, "💧 Liquidity", formatUsd(liquidityUsd));
+    addInlineField(embed, "💰 MCAP", formatUsd(marketCapUsd));
+    addInlineField(embed, "👥 Holders", formatHolders(holderCount, smartMoneyHolderCount));
+    addInlineField(embed, "💸 SM売買金額", `買い ${formatTradeUsd(smartMoneyBuyUsd)} / 売り ${formatTradeUsd(smartMoneySellUsd)}`);
+    addInlineField(embed, "🔁 SM売買件数", `買い ${formatTradeCount(smartMoneyBuyCount)} / 売り ${formatTradeCount(smartMoneySellCount)}`);
+    addInlineField(embed, "📊 Chart", `[Dexscreener](https://dexscreener.com/solana/${address})`);
+    addInlineField(embed, "🔎 Deep", "ボタンから実行");
+  }
+
+  const warningText = formatList(warnings?.slice(0, 2), NO_WARNINGS);
+  embed.addFields({
+    name: "注意点",
+    value: truncate(warningText, 500),
+    inline: false
+  });
+
+  return embed;
+}
+
+function createDiscoveryEmbeds(discoveries) {
+  const stats = discoveries.stats || {};
+  const overview = new EmbedBuilder()
+    .setColor(0x6ec6ff)
+    .setTitle("しえすたん G0 Discovery")
+    .setDescription("Smart Moneyが直近で買っている候補ですにゃ。投資助言ではないにゃ。")
+    .addFields({
+      name: "スキャン概要",
+      value: [
+        `データ取得元: ${stats.sourceLabel || "CLI"}`,
+        `Smart Money DEX Trades: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+        `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? discoveries.length)}`,
+        `SM買い2件以上: ${formatTradeCount(stats.buyCountAtLeast2 ?? 0)} / 3件以上: ${formatTradeCount(stats.buyCountAtLeast3 ?? 0)}`,
+        `MCAP取得あり: ${formatTradeCount(stats.withMarketCap ?? 0)} / 流動性取得あり: ${formatTradeCount(stats.withLiquidity ?? 0)}`,
+        `表示件数: ${formatTradeCount(stats.displayedCount ?? discoveries.length)}`,
+        `実行時間: ${formatDuration(stats.durationMs)}`
+      ].join("\n")
+    })
+    .setTimestamp(new Date());
+
+  if (discoveries.length === 0) {
+    overview.addFields({
+      name: "候補なし",
+      value: "買いが確認できる候補は見つかりませんでしたにゃ。"
+    });
+    return [overview];
+  }
+
+  const cards = discoveries.slice(0, 5).map((discovery, index) =>
+    createTokenCardEmbed({
+      address: discovery.address,
+      chain: "solana",
+      color: 0x6ec6ff,
+      confidence: discovery.confidence,
+      holderCount: discovery.holderCount,
+      imageSources: [discovery],
+      liquidityUsd: discovery.liquidityUsd,
+      marketCapUsd: discovery.marketCapUsd,
+      name: discovery.name,
+      rank: index + 1,
+      score: discovery.score,
+      smartMoneyHolderCount: discovery.smartMoneyHolderCount,
+      smartMoneyBuyCount: discovery.buyCount,
+      smartMoneyBuyUsd: discovery.buyValueUsd,
+      smartMoneySellCount: discovery.sellCount,
+      smartMoneySellUsd: discovery.sellValueUsd,
+      symbol: discovery.symbol,
+      warnings: discovery.warnings
+    })
+  );
+
+  return [overview, ...cards];
 }
 
 function createDiscoveryEmbed(discoveries) {
@@ -335,7 +527,7 @@ function createDeepAnalysisEmbed(analysis) {
             `チャート: [Dexscreener](https://dexscreener.com/solana/${analysis.tokenAddress})`,
             `時価総額: ${formatUsd(tokenInfo.marketCapUsd || netflow.market_cap_usd)}`,
             `流動性: ${formatUsd(tokenInfo.liquidityUsd)}`,
-            `ホルダー数: ${formatNumber(tokenInfo.holderCount)}`
+            `ホルダー数: ${formatHolders(tokenInfo.holderCount, analysis.holders.smartMoneyHolderCount)}`
           ].join("\n")
         )
       },
@@ -368,6 +560,7 @@ function createDeepAnalysisEmbed(analysis) {
             `取得件数: ${formatNumber(analysis.holders.rowCount)}`,
             `上位ホルダー評価額合計: ${formatUsd(analysis.holders.totalValueUsd)}`,
             `上位ホルダー保有比率: ${formatPercent(analysis.holders.totalOwnership)}`,
+            `Smart Money系ホルダー: ${formatNumber(analysis.holders.smartMoneyHolderCount)}`,
             `主なラベル: ${formatList(analysis.holders.labels)}`
           ].join("\n")
         )
@@ -511,6 +704,74 @@ function createRadarEmbed(results, stats = {}) {
   return embed;
 }
 
+function createRadarEmbeds(results, stats = {}) {
+  const confidenceCounts = stats.confidenceCounts || {};
+  const hasMediumOrHigher = stats.hasMediumOrHigher !== false;
+  const hasOnlyRisky = Boolean(stats.hasOnlyRisky);
+  const overview = new EmbedBuilder()
+    .setColor(0xf2a65a)
+    .setTitle(hasOnlyRisky ? "しえすたん Alpha Radar | 参考候補" : "しえすたん Alpha Radar")
+    .setDescription(
+      hasMediumOrHigher
+        ? "G0 DiscoveryからDeep分析まで通した統合レーダーですにゃ。投資助言ではないにゃ。"
+        : "今回は medium 以上の候補はありませんでしたにゃ。参考候補として risky / low を表示しているにゃ。投資助言ではないにゃ。"
+    )
+    .addFields({
+      name: "スキャン概要",
+      value: [
+        `データ取得元: ${stats.sourceLabel || "CLI"}`,
+        `Smart Money DEX Trades: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+        `G0候補: ${formatTradeCount(stats.g0CandidateCount ?? 0)}`,
+        `Deep分析: ${formatTradeCount(stats.deepAnalyzedCount ?? 0)}`,
+        `内訳: high ${formatTradeCount(confidenceCounts.high ?? 0)} / medium ${formatTradeCount(confidenceCounts.medium ?? 0)} / low ${formatTradeCount(confidenceCounts.low ?? 0)} / risky ${formatTradeCount(confidenceCounts.risky ?? 0)}`,
+        `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`,
+        `実行時間: ${formatDuration(stats.durationMs)}`
+      ].join("\n")
+    })
+    .setTimestamp(new Date());
+
+  if (results.length === 0) {
+    overview.addFields({
+      name: "候補なし",
+      value: "今回のRadarでは表示できる候補が見つかりませんでしたにゃ。"
+    });
+    return [overview];
+  }
+
+  const cards = results.slice(0, 5).map((result, index) => {
+    const discovery = result.discovery || {};
+    const analysis = result.analysis || {};
+    const tokenInfo = analysis.tokenInfo || {};
+    const dexTrades = analysis.dexTrades || {};
+    const tokenName = tokenInfo.name || discovery.name;
+    const symbol = tokenInfo.symbol || discovery.symbol;
+
+    return createTokenCardEmbed({
+      address: result.address,
+      chain: analysis.chain || "solana",
+      color: 0xf2a65a,
+      confidence: result.finalConfidence,
+      deepScore: analysis.score,
+      holderCount: tokenInfo.holderCount || discovery.holderCount,
+      imageSources: [tokenInfo, discovery],
+      liquidityUsd: tokenInfo.liquidityUsd || discovery.liquidityUsd,
+      marketCapUsd: tokenInfo.marketCapUsd || discovery.marketCapUsd,
+      name: tokenName,
+      rank: index + 1,
+      score: result.finalScore,
+      smartMoneyHolderCount: analysis.holders?.smartMoneyHolderCount || discovery.smartMoneyHolderCount,
+      smartMoneyBuyCount: discovery.buyCount,
+      smartMoneyBuyUsd: dexTrades.buyValueUsd ?? discovery.buyValueUsd,
+      smartMoneySellCount: discovery.sellCount,
+      smartMoneySellUsd: dexTrades.sellValueUsd ?? discovery.sellValueUsd,
+      symbol,
+      warnings: result.warnings
+    });
+  });
+
+  return [overview, ...cards];
+}
+
 function formatReviewToken(item) {
   const symbol = item.symbol || UNKNOWN_SYMBOL;
   const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
@@ -561,6 +822,14 @@ function formatReviewOhlcvLines(ohlcv) {
     ];
   }
 
+  if (ohlcv.status === "failed") {
+    return [
+      "初回検出後の最大MCAP: OHLCV取得失敗",
+      "初回検出後の最大MCAP上昇率: OHLCV取得失敗",
+      "初回検出後の最大価格上昇率: OHLCV取得失敗"
+    ];
+  }
+
   if (ohlcv.status === "not_evaluable") {
     return [
       "MCAP評価: 評価保留",
@@ -574,8 +843,8 @@ function formatReviewOhlcvLines(ohlcv) {
     `初回検出後の最大MCAP上昇率: **${ohlcv.marketCapEvaluable ? formatSignedPercent(ohlcv.maxGainPct) : "評価保留"}**`,
     `上昇率基準MCAP: ${ohlcv.marketCapEvaluable ? formatUsd(ohlcv.baselineMarketCapUsd) : "評価保留"}${ohlcv.marketCapEvaluable ? (ohlcv.usedOhlcvBaseline ? "（OHLCV初回値）" : "（初回検出時）") : ""}`,
     `MCAP最大到達: ${ohlcv.marketCapEvaluable ? (ohlcv.maxReachedAt === "current" ? "現在値" : formatDateTime(ohlcv.maxReachedAt)) : "評価保留"}`,
-    `初回検出後の最大価格上昇率: **${ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留"}**`,
-    `上昇率基準価格: ${ohlcv.priceEvaluable ? `${formatTokenPrice(ohlcv.baselinePriceUsd)}（OHLCV初回値）` : "評価保留"}`,
+    `初回検出後の最大価格上昇率: **${ohlcv.priceEvaluable ? `${formatSignedPercent(ohlcv.maxPriceGainPct)}（${ohlcv.priceTimeframe || "OHLCV"}）` : "評価保留"}**`,
+    `上昇率基準価格: ${ohlcv.priceEvaluable ? `${formatTokenPrice(ohlcv.baselinePriceUsd)}（${ohlcv.priceBaselineLabel || "OHLCV初回値"}）` : "評価保留"}`,
     `最大価格: ${ohlcv.priceEvaluable ? formatTokenPrice(ohlcv.maxPriceUsd) : "評価保留"}`,
     `価格最大到達: ${ohlcv.priceEvaluable ? formatDateTime(ohlcv.maxPriceReachedAt) : "評価保留"}`
   ];
@@ -603,7 +872,11 @@ function formatReviewTokenSummary(item) {
   const symbol = item.symbol || UNKNOWN_SYMBOL;
   const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
   const ohlcv = item.ohlcvPerformance || {};
-  const priceGain = ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留";
+  const priceGain = ohlcv.status === "failed"
+    ? "OHLCV取得失敗"
+    : ohlcv.priceEvaluable
+      ? `${formatSignedPercent(ohlcv.maxPriceGainPct)}（${ohlcv.priceTimeframe || "OHLCV"}）`
+      : "評価保留";
 
   return [
     `**${symbol}**`,
@@ -764,7 +1037,11 @@ function formatReviewBriefWarnings(warnings) {
 function formatReviewRankingItem(item, index) {
   const symbol = item.symbol || UNKNOWN_SYMBOL;
   const ohlcv = item.ohlcvPerformance || {};
-  const priceGain = ohlcv.priceEvaluable ? formatSignedPercent(ohlcv.maxPriceGainPct) : "評価保留";
+  const priceGain = ohlcv.status === "failed"
+    ? "OHLCV取得失敗"
+    : ohlcv.priceEvaluable
+      ? `${formatSignedPercent(ohlcv.maxPriceGainPct)}（${ohlcv.priceTimeframe || "OHLCV"}）`
+      : "評価保留";
 
   return [
     `最大価格上昇率: **${priceGain}**`,
@@ -803,17 +1080,38 @@ function createReviewSummaryEmbed(review) {
         ? "価格ベースの最大上昇率を計算できる候補はまだありませんにゃ。"
         : "`--mature 1h` や `--mature 4h` を付けるとOHLCVで確認できますにゃ。"
     });
-    return embed;
+    return [embed];
   }
 
-  ranked.forEach((item, index) => {
-    embed.addFields({
-      name: `${index + 1}位  ${item.symbol || UNKNOWN_SYMBOL}`,
-      value: truncate(formatReviewRankingItem(item, index), 900)
+  const cards = ranked.map((item, index) => {
+    const ohlcv = item.ohlcvPerformance || {};
+    const maxPriceGain = ohlcv.status === "failed"
+      ? "OHLCV取得失敗"
+      : ohlcv.priceEvaluable
+        ? `${formatSignedPercent(ohlcv.maxPriceGainPct)}（${ohlcv.priceTimeframe || "OHLCV"}）`
+        : "評価保留";
+
+    return createTokenCardEmbed({
+      address: item.address,
+      chain: "solana",
+      color: 0x95d5b2,
+      confidence: item.finalConfidence,
+      holderCount: item.currentHolderCount,
+      imageSources: [item],
+      liquidityUsd: item.currentLiquidityUsd,
+      marketCapUsd: item.currentMarketCapUsd || item.detectedMarketCapUsd,
+      maxPriceGain,
+      mode: "review",
+      name: item.name,
+      rank: index + 1,
+      score: item.highestFinalScore ?? item.finalScore,
+      smartMoneyHolderCount: item.smartMoneyHolderCount,
+      symbol: item.symbol,
+      warnings: item.warnings
     });
   });
 
-  return embed;
+  return [embed, ...cards];
 }
 
 function createReviewDetailEmbed(review) {
@@ -891,7 +1189,10 @@ module.exports = {
   createDeepAnalysisEmbed,
   createDiscoveryComponents,
   createDiscoveryEmbed,
+  createDiscoveryEmbeds,
   createEarlySignalEmbed,
   createRadarEmbed,
-  createReviewEmbed: createReviewEmbedReadable
+  createRadarEmbeds,
+  createReviewEmbed: createReviewEmbedReadable,
+  createTokenCardComponents
 };

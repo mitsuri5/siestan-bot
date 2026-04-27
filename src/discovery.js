@@ -79,6 +79,7 @@ function summarizeTokenInfo(info) {
   return {
     name: info.name || "",
     symbol: info.symbol || "",
+    imageUrl: info.image_url || info.imageUrl || info.image || info.logo_url || info.logoUrl || info.logo || info.icon_url || info.iconUrl || info.icon || info.token_image || info.tokenImage || details.image_url || details.imageUrl || details.image || details.logo_url || details.logoUrl || details.logo || details.icon_url || details.iconUrl || details.icon || details.token_image || details.tokenImage || "",
     marketCapUsd: toNumber(details.market_cap_usd),
     liquidityUsd: toNumber(metrics.liquidity_usd),
     holderCount: toNumber(metrics.total_holders)
@@ -105,6 +106,7 @@ async function enrichCandidates(candidates) {
         ...candidate,
         name: info.name || candidate.name,
         symbol: info.symbol || candidate.symbol,
+        imageUrl: info.imageUrl || candidate.imageUrl,
         marketCapUsd: info.marketCapUsd,
         liquidityUsd: info.liquidityUsd,
         holderCount: info.holderCount

@@ -24,7 +24,7 @@ function parseJsonOutput(output) {
 async function runNansen(args) {
   const { file, args: commandArgs } = getNansenCommand(args);
   const { stdout } = await execFileAsync(file, commandArgs, {
-    maxBuffer: 1024 * 1024 * 5,
+    maxBuffer: 20 * 1024 * 1024,
     windowsHide: true
   });
 

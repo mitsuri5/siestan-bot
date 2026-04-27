@@ -10,6 +10,9 @@ const MATURE_DURATIONS = {
   "24h": 24 * 60 * 60 * 1000,
   "7d": 7 * 24 * 60 * 60 * 1000
 };
+// 1m OHLCV can be very large and may exceed child_process maxBuffer, so normal review starts from 5m.
+const PRICE_TIMEFRAMES = ["5m", "15m", "1h"];
+const MARKET_CAP_TIMEFRAMES = ["5m", "15m", "1h"];
 const LEGACY_SINGLE_BUY_WARNING = "G0では単発買いなので、継続性はDeep分析で確認してくださいにゃ";
 const SINGLE_BUY_WARNING = "Smart Moneyの買いが1件だけなので、継続性はDeep分析で確認してくださいにゃ";
 
@@ -107,6 +110,25 @@ function getTimeframeStart(timestampMs, timeframe) {
   return timestampMs;
 }
 
+function getNextTimeframeStart(timestampMs, timeframe) {
+  if (!Number.isFinite(timestampMs)) {
+    return NaN;
+  }
+
+  const durationMs = {
+    "1m": 60 * 1000,
+    "5m": 5 * 60 * 1000,
+    "15m": 15 * 60 * 1000,
+    "1h": 60 * 60 * 1000
+  }[timeframe];
+
+  if (!durationMs) {
+    return timestampMs;
+  }
+
+  return Math.floor(timestampMs / durationMs) * durationMs + durationMs;
+}
+
 function getConfidenceCounts(items) {
   const counts = {
     high: 0,
@@ -166,6 +188,7 @@ function getDetectedRecord(run, result, index) {
   const discovery = result.discovery || {};
   const netflow = analysis.netflowToken || {};
   const flow = analysis.flow || {};
+  const holders = analysis.holders || {};
   const dexTrades = analysis.dexTrades || {};
   const address = result.address || analysis.tokenAddress || discovery.address;
 
@@ -184,6 +207,7 @@ function getDetectedRecord(run, result, index) {
     deepDexBuyValueUsd: toNumber(dexTrades.buyValueUsd),
     deepDexSellValueUsd: toNumber(dexTrades.sellValueUsd),
     smartMoneyBuyCount: toNumber(discovery.buyCount),
+    smartMoneyHolderCount: toNumber(holders.smartMoneyHolderCount),
     warnings: normalizeWarnings(result.warnings)
   };
 }
@@ -283,8 +307,6 @@ function groupDetectionsByToken(detections) {
 }
 
 async function loadOhlcvPerformance(detection, currentInfo, shouldLoad) {
-  const timeframe = "1h";
-
   if (!shouldLoad) {
     return {
       status: "skipped"
@@ -292,87 +314,52 @@ async function loadOhlcvPerformance(detection, currentInfo, shouldLoad) {
   }
 
   try {
-    const rows = await getSolanaTokenOhlcv({
-      tokenAddress: detection.address,
-      timeframe
-    });
     const detectedAtMs = new Date(detection.detectedAt).getTime();
-    const detectedCandleStartMs = getTimeframeStart(detectedAtMs, timeframe);
-    const candles = rows
-      .map((row) => ({
-        intervalStart: row.interval_start,
-        intervalStartMs: parseNansenTime(row.interval_start),
-        baselineMarketCapUsd: getMarketCapOpenOrClose(row.market_cap),
-        marketCapHighUsd: getMarketCapHigh(row.market_cap),
-        baselinePriceUsd: getOhlcOpenOrClose(row),
-        priceHighUsd: getOhlcHigh(row),
-        priceCloseUsd: getOhlcClose(row)
-      }))
-      .filter(
-        (row) =>
-          Number.isFinite(row.intervalStartMs) &&
-          row.intervalStartMs >= detectedCandleStartMs &&
-          (row.marketCapHighUsd > 0 || row.priceHighUsd > 0)
-      )
-      .sort((a, b) => a.intervalStartMs - b.intervalStartMs);
+    const [pricePerformance, marketCapPerformance] = await Promise.all([
+      loadBestPricePerformance(detection.address, detectedAtMs),
+      loadBestMarketCapPerformance(detection.address, detectedAtMs, detection, currentInfo)
+    ]);
 
-    if (candles.length === 0) {
+    if (pricePerformance?.failed && marketCapPerformance?.failed) {
+      return {
+        status: "failed",
+        candleCount: 0
+      };
+    }
+
+    const usablePricePerformance = pricePerformance?.failed ? null : pricePerformance;
+    const usableMarketCapPerformance = marketCapPerformance?.failed ? null : marketCapPerformance;
+
+    if (!usablePricePerformance && !usableMarketCapPerformance) {
       return {
         status: "waiting",
         candleCount: 0
       };
     }
 
-    const detectedMarketCapUsd = toNumber(detection.detectedMarketCapUsd);
-    const baselineMarketCapUsd = detectedMarketCapUsd > 0 ? detectedMarketCapUsd : candles[0].baselineMarketCapUsd;
-    const marketCapCandles = candles.filter((row) => row.marketCapHighUsd > 0);
-    const priceCandles = candles.filter((row) => row.priceHighUsd > 0);
-    const maxCandle = marketCapCandles.reduce(
-      (best, row) => (row.marketCapHighUsd > best.marketCapHighUsd ? row : best),
-      marketCapCandles[0] || null
-    );
-    const currentMarketCapUsd = toNumber(currentInfo.marketCapUsd);
-    const maxMarketCapFromOhlcv = maxCandle?.marketCapHighUsd || 0;
-    const currentIsMax = currentMarketCapUsd > maxMarketCapFromOhlcv;
-    const maxMarketCapUsd = currentIsMax ? currentMarketCapUsd : maxMarketCapFromOhlcv;
-    const canCalculateMarketCapGain = baselineMarketCapUsd > 0 && maxMarketCapUsd > 0;
-    const priceBaselineCandle = priceCandles.find((row) => row.baselinePriceUsd > 0);
-    const baselinePriceUsd = priceBaselineCandle?.baselinePriceUsd || 0;
-    const maxPriceCandle = priceCandles.reduce(
-      (best, row) => (row.priceHighUsd > best.priceHighUsd ? row : best),
-      priceCandles[0] || null
-    );
-    const latestPriceCandle = [...priceCandles].reverse().find((row) => row.priceCloseUsd > 0);
-    const maxPriceUsd = maxPriceCandle?.priceHighUsd || 0;
-    const canCalculatePriceGain = baselinePriceUsd > 0 && maxPriceUsd > 0;
-
-    if (!canCalculateMarketCapGain && !canCalculatePriceGain) {
-      return {
-        status: "not_evaluable",
-        candleCount: candles.length
-      };
-    }
-
     return {
       status: "ready",
-      candleCount: candles.length,
-      baselineMarketCapUsd,
-      usedOhlcvBaseline: detectedMarketCapUsd <= 0,
-      maxMarketCapUsd,
-      maxGainPct: canCalculateMarketCapGain ? (maxMarketCapUsd - baselineMarketCapUsd) / baselineMarketCapUsd : null,
-      maxReachedAt: currentIsMax ? "current" : maxCandle ? new Date(maxCandle.intervalStartMs).toISOString() : null,
-      marketCapEvaluable: canCalculateMarketCapGain,
-      baselinePriceUsd,
-      latestPriceUsd: latestPriceCandle?.priceCloseUsd || 0,
-      maxPriceUsd,
-      maxPriceGainPct: canCalculatePriceGain ? (maxPriceUsd - baselinePriceUsd) / baselinePriceUsd : null,
-      maxPriceReachedAt: maxPriceCandle ? new Date(maxPriceCandle.intervalStartMs).toISOString() : null,
-      priceEvaluable: canCalculatePriceGain
+      candleCount: (usablePricePerformance?.candleCount || 0) + (usableMarketCapPerformance?.candleCount || 0),
+      baselineMarketCapUsd: usableMarketCapPerformance?.baselineMarketCapUsd || 0,
+      usedOhlcvBaseline: Boolean(usableMarketCapPerformance?.usedOhlcvBaseline),
+      maxMarketCapUsd: usableMarketCapPerformance?.maxMarketCapUsd || 0,
+      maxGainPct: usableMarketCapPerformance?.maxGainPct ?? null,
+      maxReachedAt: usableMarketCapPerformance?.maxReachedAt || null,
+      marketCapTimeframe: usableMarketCapPerformance?.timeframe || null,
+      marketCapEvaluable: Boolean(usableMarketCapPerformance),
+      baselinePriceUsd: usablePricePerformance?.baselinePriceUsd || 0,
+      latestPriceUsd: usablePricePerformance?.latestPriceUsd || 0,
+      maxPriceUsd: usablePricePerformance?.maxPriceUsd || 0,
+      maxPriceGainPct: usablePricePerformance?.maxPriceGainPct ?? null,
+      maxPriceReachedAt: usablePricePerformance?.maxPriceReachedAt || null,
+      priceTimeframe: usablePricePerformance?.timeframe || null,
+      priceBaselineLabel: usablePricePerformance?.baselineLabel || null,
+      priceEvaluable: Boolean(usablePricePerformance)
     };
   } catch (error) {
     console.error("Failed to load token OHLCV for review:", detection.address, error);
     return {
-      status: "waiting",
+      status: "failed",
       candleCount: 0
     };
   }
@@ -391,6 +378,7 @@ async function loadCurrentTokenInfo(address) {
       ok: true,
       symbol: rawInfo.symbol || "",
       name: rawInfo.name || "",
+      imageUrl: rawInfo.image_url || rawInfo.imageUrl || rawInfo.image || rawInfo.logo_url || rawInfo.logoUrl || rawInfo.logo || rawInfo.icon_url || rawInfo.iconUrl || rawInfo.icon || rawInfo.token_image || rawInfo.tokenImage || details.image_url || details.imageUrl || details.image || details.logo_url || details.logoUrl || details.logo || details.icon_url || details.iconUrl || details.icon || details.token_image || details.tokenImage || "",
       marketCapUsd: toNumber(details.market_cap_usd),
       liquidityUsd: toNumber(metrics.liquidity_usd),
       holderCount: toNumber(metrics.total_holders)
@@ -441,6 +429,116 @@ function getTopMovers(items, direction) {
   return sorted.slice(0, 3);
 }
 
+async function loadOhlcvRows(tokenAddress, timeframe) {
+  const rows = await getSolanaTokenOhlcv({
+    tokenAddress,
+    timeframe
+  });
+
+  return rows
+    .map((row) => ({
+      intervalStart: row.interval_start,
+      intervalStartMs: parseNansenTime(row.interval_start),
+      baselineMarketCapUsd: getMarketCapOpenOrClose(row.market_cap),
+      marketCapHighUsd: getMarketCapHigh(row.market_cap),
+      baselinePriceUsd: getOhlcOpenOrClose(row),
+      priceHighUsd: getOhlcHigh(row),
+      priceCloseUsd: getOhlcClose(row)
+    }))
+    .filter((row) => Number.isFinite(row.intervalStartMs))
+    .sort((a, b) => a.intervalStartMs - b.intervalStartMs);
+}
+
+function selectPriceCandles(rows, detectedAtMs, timeframe) {
+  const startMs = getNextTimeframeStart(detectedAtMs, timeframe);
+  return rows.filter((row) => row.intervalStartMs >= startMs && row.priceHighUsd > 0);
+}
+
+function selectMarketCapCandles(rows, detectedAtMs, timeframe) {
+  const startMs = getTimeframeStart(detectedAtMs, timeframe);
+  return rows.filter((row) => row.intervalStartMs >= startMs && row.marketCapHighUsd > 0);
+}
+
+async function loadBestPricePerformance(tokenAddress, detectedAtMs) {
+  let hadError = false;
+
+  for (const timeframe of PRICE_TIMEFRAMES) {
+    let rows;
+    try {
+      rows = await loadOhlcvRows(tokenAddress, timeframe);
+    } catch (error) {
+      hadError = true;
+      console.error(`Failed to load ${timeframe} token OHLCV for review:`, tokenAddress, error);
+      continue;
+    }
+    const priceCandles = selectPriceCandles(rows, detectedAtMs, timeframe);
+    const baselineCandle = priceCandles.find((row) => row.baselinePriceUsd > 0);
+    const maxPriceCandle = priceCandles.reduce(
+      (best, row) => (row.priceHighUsd > best.priceHighUsd ? row : best),
+      priceCandles[0] || null
+    );
+    const latestPriceCandle = [...priceCandles].reverse().find((row) => row.priceCloseUsd > 0);
+    const baselinePriceUsd = baselineCandle?.baselinePriceUsd || 0;
+    const maxPriceUsd = maxPriceCandle?.priceHighUsd || 0;
+
+    if (priceCandles.length > 0 && baselinePriceUsd > 0 && maxPriceUsd > 0) {
+      return {
+        candleCount: priceCandles.length,
+        timeframe,
+        baselineLabel: timeframe === "1h" ? "検出後最初の1h足（保守計算）" : `検出後最初の${timeframe}足`,
+        baselinePriceUsd,
+        latestPriceUsd: latestPriceCandle?.priceCloseUsd || 0,
+        maxPriceUsd,
+        maxPriceGainPct: (maxPriceUsd - baselinePriceUsd) / baselinePriceUsd,
+        maxPriceReachedAt: new Date(maxPriceCandle.intervalStartMs).toISOString()
+      };
+    }
+  }
+
+  return hadError ? { failed: true } : null;
+}
+
+async function loadBestMarketCapPerformance(tokenAddress, detectedAtMs, detection, currentInfo) {
+  let hadError = false;
+
+  for (const timeframe of MARKET_CAP_TIMEFRAMES) {
+    let rows;
+    try {
+      rows = await loadOhlcvRows(tokenAddress, timeframe);
+    } catch (error) {
+      hadError = true;
+      console.error(`Failed to load ${timeframe} token OHLCV market cap for review:`, tokenAddress, error);
+      continue;
+    }
+    const marketCapCandles = selectMarketCapCandles(rows, detectedAtMs, timeframe);
+    const maxCandle = marketCapCandles.reduce(
+      (best, row) => (row.marketCapHighUsd > best.marketCapHighUsd ? row : best),
+      marketCapCandles[0] || null
+    );
+    const detectedMarketCapUsd = toNumber(detection.detectedMarketCapUsd);
+    const baselineMarketCapUsd =
+      detectedMarketCapUsd > 0 ? detectedMarketCapUsd : marketCapCandles.find((row) => row.baselineMarketCapUsd > 0)?.baselineMarketCapUsd || 0;
+    const currentMarketCapUsd = toNumber(currentInfo.marketCapUsd);
+    const maxMarketCapFromOhlcv = maxCandle?.marketCapHighUsd || 0;
+    const currentIsMax = currentMarketCapUsd > maxMarketCapFromOhlcv;
+    const maxMarketCapUsd = currentIsMax ? currentMarketCapUsd : maxMarketCapFromOhlcv;
+
+    if (baselineMarketCapUsd > 0 && maxMarketCapUsd > 0) {
+      return {
+        candleCount: marketCapCandles.length,
+        timeframe,
+        baselineMarketCapUsd,
+        usedOhlcvBaseline: detectedMarketCapUsd <= 0,
+        maxMarketCapUsd,
+        maxGainPct: (maxMarketCapUsd - baselineMarketCapUsd) / baselineMarketCapUsd,
+        maxReachedAt: currentIsMax ? "current" : maxCandle ? new Date(maxCandle.intervalStartMs).toISOString() : null
+      };
+    }
+  }
+
+  return hadError ? { failed: true } : null;
+}
+
 function getTopPriceGainers(items) {
   return items
     .filter((item) => item.ohlcvPerformance.priceEvaluable)
@@ -467,6 +565,7 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
       address: token.address,
       symbol: currentInfo.symbol || latestDetection.symbol || firstDetection.symbol,
       name: currentInfo.name,
+      imageUrl: currentInfo.imageUrl,
       detectedAt: firstDetection.detectedAt,
       firstDetectedAt: token.first.detectedAt,
       latestDetectedAt: token.latest.detectedAt,
@@ -480,6 +579,7 @@ async function reviewSolanaRadarSignals({ option = "default", mature = null } = 
       detectedLiquidityUsd: firstDetection.detectedLiquidityUsd,
       currentLiquidityUsd: currentInfo.liquidityUsd,
       currentHolderCount: currentInfo.holderCount,
+      smartMoneyHolderCount: firstDetection.smartMoneyHolderCount || latestDetection.smartMoneyHolderCount,
       netFlow24hUsd: firstDetection.netFlow24hUsd,
       netFlow7dUsd: firstDetection.netFlow7dUsd,
       flowIntelligenceNetFlowUsd: firstDetection.flowIntelligenceNetFlowUsd,

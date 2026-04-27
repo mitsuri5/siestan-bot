@@ -5,11 +5,11 @@ const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnal
 const { discoverSolanaCandidates } = require("./src/discovery");
 const {
   createDeepAnalysisEmbed,
-  createDiscoveryComponents,
-  createDiscoveryEmbed,
+  createDiscoveryEmbeds,
   createEarlySignalEmbed,
-  createRadarEmbed,
-  createReviewEmbed
+  createRadarEmbeds,
+  createReviewEmbed,
+  createTokenCardComponents
 } = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
 const { runSolanaRadar } = require("./src/radar");
@@ -77,6 +77,24 @@ function parseReviewOptions(parts) {
   }
 
   return options;
+}
+
+async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
+  const [overview, ...cards] = embeds;
+
+  await reply.edit({
+    components: [],
+    content: "",
+    embeds: overview ? [overview] : []
+  });
+
+  for (let index = 0; index < cards.length; index += 1) {
+    const address = addresses[index];
+    await message.channel.send({
+      components: createTokenCardComponents(address),
+      embeds: [cards[index]]
+    });
+  }
 }
 
 client.once(Events.ClientReady, (readyClient) => {
@@ -198,11 +216,12 @@ client.on(Events.MessageCreate, async (message) => {
         discoveries
       });
 
-      await reply.edit({
-        components: createDiscoveryComponents(discoveries),
-        content: "",
-        embeds: [createDiscoveryEmbed(discoveries)]
-      });
+      await sendOverviewAndTokenCards(
+        message,
+        reply,
+        createDiscoveryEmbeds(discoveries),
+        discoveries.slice(0, 5).map((discovery) => discovery.address)
+      );
     } catch (error) {
       console.error("Failed to run Solana discovery:", error);
       await reply.edit("SolanaのG0 Discoveryに失敗しましたにゃ。");
@@ -228,10 +247,12 @@ client.on(Events.MessageCreate, async (message) => {
         stats: radar.stats
       });
 
-      await reply.edit({
-        content: "",
-        embeds: [createRadarEmbed(radar.results, radar.stats)]
-      });
+      await sendOverviewAndTokenCards(
+        message,
+        reply,
+        createRadarEmbeds(radar.results, radar.stats),
+        radar.results.slice(0, 5).map((result) => result.address)
+      );
     } catch (error) {
       console.error("Failed to run Solana radar:", error);
       await reply.edit("SolanaのAlpha Radarに失敗しましたにゃ。");
@@ -251,12 +272,23 @@ client.on(Events.MessageCreate, async (message) => {
     try {
       const review = await reviewSolanaRadarSignals(reviewOptions);
       const embed = createReviewEmbed(review, { detail: reviewOptions.detail });
+      const embeds = Array.isArray(embed) ? embed : [embed];
 
       try {
-        await reply.edit({
-          content: "",
-          embeds: [embed]
-        });
+        if (reviewOptions.detail || embeds.length <= 1) {
+          await reply.edit({
+            components: [],
+            content: "",
+            embeds
+          });
+        } else {
+          await sendOverviewAndTokenCards(
+            message,
+            reply,
+            embeds,
+            (review.topPriceGainers || []).slice(0, 5).map((item) => item.address)
+          );
+        }
       } catch (replyError) {
         console.error("Failed to send Solana review embed:", replyError);
         await reply.edit("Signal Reviewの表示が長すぎましたにゃ。`--detail`なし、または条件を絞ってもう一度試してくださいにゃ。");

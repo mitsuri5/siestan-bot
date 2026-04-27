@@ -48,6 +48,7 @@ function summarizeTokenInfo(info) {
   return {
     name: info.name || "",
     symbol: info.symbol || "",
+    imageUrl: info.image_url || info.imageUrl || info.image || info.logo_url || info.logoUrl || info.logo || info.icon_url || info.iconUrl || info.icon || info.token_image || info.tokenImage || details.image_url || details.imageUrl || details.image || details.logo_url || details.logoUrl || details.logo || details.icon_url || details.iconUrl || details.icon || details.token_image || details.tokenImage || "",
     marketCapUsd: toNumber(details.market_cap_usd),
     liquidityUsd: toNumber(metrics.liquidity_usd),
     holderCount: toNumber(metrics.total_holders),
@@ -92,6 +93,7 @@ function summarizeHolders(rows) {
   return {
     rowCount: rows.length,
     labels: collectValues(rows, ["address_label", "label", "entity_label", "wallet_label"]).slice(0, 3),
+    smartMoneyHolderCount: countSmartMoneyHolders(rows),
     totalValueUsd,
     totalOwnership
   };
@@ -137,6 +139,45 @@ function collectValues(rows, keys) {
   }
 
   return values;
+}
+
+function getHolderAddress(row) {
+  return row.address || row.wallet_address || row.holder_address || row.owner_address || row.wallet;
+}
+
+function isSmartMoneyHolder(row) {
+  const labelText = [
+    row.address_label,
+    row.label,
+    row.entity_label,
+    row.wallet_label,
+    row.smart_money_label,
+    row.nansen_label,
+    ...(Array.isArray(row.labels) ? row.labels : []),
+    ...(Array.isArray(row.wallet_labels) ? row.wallet_labels : [])
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return ["smart money", "smart trader", "fund", "whale"].some((label) => labelText.includes(label));
+}
+
+function countSmartMoneyHolders(rows) {
+  const wallets = new Set();
+
+  for (const row of rows) {
+    if (!isSmartMoneyHolder(row)) {
+      continue;
+    }
+
+    const address = getHolderAddress(row);
+    if (address) {
+      wallets.add(String(address).toLowerCase());
+    }
+  }
+
+  return wallets.size;
 }
 
 function getConfidence(score, shouldDowngrade) {
