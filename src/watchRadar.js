@@ -1,4 +1,5 @@
 const {
+  getSolanaTokenOhlcv,
   getSolanaSmartMoneyNetflow,
   getTokenDexTrades,
   getTokenFlowIntelligence,
@@ -11,6 +12,7 @@ const { readSm90dCache, writeSm90dCache } = require("./storage");
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
 const SM90D_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const BUYER_QUALITY_LIMIT = 3;
+const DEXSCREENER_TIMEOUT_MS = 15 * 1000;
 
 function isValidSolanaAddress(address) {
   return SOLANA_ADDRESS_PATTERN.test(String(address || ""));
@@ -92,19 +94,186 @@ function getTokenPriceUsd(info) {
   );
 }
 
-function summarizeTokenInfo(info) {
+function getTokenMarketCapUsd(info) {
+  const details = info?.token_details || {};
+  return toNumber(details.market_cap_usd || info?.market_cap_usd || info?.marketCapUsd);
+}
+
+function getTokenFdvUsd(info) {
+  const details = info?.token_details || {};
+  return toNumber(details.fdv_usd || details.fdv || info?.fdv_usd || info?.fdvUsd || info?.fdv);
+}
+
+function getLatestOhlcvSnapshot(rows) {
+  const latest = (rows || [])
+    .filter((row) => row && Number.isFinite(new Date(row.interval_start || row.intervalStart || 0).getTime()))
+    .sort((a, b) =>
+      new Date(b.interval_start || b.intervalStart || 0).getTime() -
+      new Date(a.interval_start || a.intervalStart || 0).getTime()
+    )[0];
+
+  if (!latest) {
+    return {
+      priceUsd: 0,
+      marketCapUsd: 0
+    };
+  }
+
+  const marketCap = latest.market_cap || latest.marketCap || {};
+  return {
+    priceUsd: toNumber(latest.close || latest.price_usd || latest.priceUsd),
+    marketCapUsd: toNumber(marketCap.close || marketCap.high || latest.market_cap_usd || latest.marketCapUsd)
+  };
+}
+
+function selectDexscreenerBestPair(pairs) {
+  return (pairs || [])
+    .filter((pair) => pair && String(pair.chainId || "").toLowerCase() === "solana")
+    .sort((a, b) => toNumber(b.liquidity?.usd) - toNumber(a.liquidity?.usd))[0] || null;
+}
+
+async function fetchJsonWithTimeout(url) {
+  if (typeof fetch !== "function") {
+    throw new Error("Global fetch is not available in this Node.js runtime.");
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), DEXSCREENER_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "siestan-bot/1.0"
+      },
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Dexscreener request failed with status ${response.status}.`);
+    }
+
+    return response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function getDexscreenerTokenSnapshot({ chain, tokenAddress }) {
+  if (String(chain).toLowerCase() !== "solana") {
+    return {
+      priceUsd: 0,
+      marketCapUsd: 0,
+      fdvUsd: 0,
+      liquidityUsd: 0,
+      source: "none"
+    };
+  }
+
+  const urls = [
+    `https://api.dexscreener.com/token-pairs/v1/solana/${encodeURIComponent(tokenAddress)}`,
+    `https://api.dexscreener.com/latest/dex/tokens/${encodeURIComponent(tokenAddress)}`
+  ];
+
+  for (const url of urls) {
+    try {
+      const parsed = await fetchJsonWithTimeout(url);
+      const pairs = Array.isArray(parsed) ? parsed : parsed?.pairs;
+      const bestPair = selectDexscreenerBestPair(pairs);
+
+      if (bestPair) {
+        const marketCapUsd = toNumber(bestPair.marketCap);
+        const fdvUsd = toNumber(bestPair.fdv);
+        return {
+          priceUsd: toNumber(bestPair.priceUsd),
+          marketCapUsd: marketCapUsd || fdvUsd,
+          fdvUsd,
+          liquidityUsd: toNumber(bestPair.liquidity?.usd),
+          source: "dexscreener",
+          pairAddress: bestPair.pairAddress || ""
+        };
+      }
+    } catch (error) {
+      console.error("Failed to load Dexscreener token pairs:", error.message);
+    }
+  }
+
+  return {
+    priceUsd: 0,
+    marketCapUsd: 0,
+    fdvUsd: 0,
+    liquidityUsd: 0,
+    source: "none"
+  };
+}
+
+function summarizeTokenInfo(info, market = {}) {
   const details = info?.token_details || {};
   const metrics = info?.spot_metrics || {};
+  const infoPriceUsd = getTokenPriceUsd(info);
+  const infoMarketCapUsd = getTokenMarketCapUsd(info);
+  const infoFdvUsd = getTokenFdvUsd(info);
 
   return {
     name: info?.name || details.name || "",
     symbol: info?.symbol || details.symbol || "",
     imageUrl: info?.image_url || info?.imageUrl || info?.image || info?.logo_url || info?.logoUrl || details.image_url || details.imageUrl || details.logo_url || details.logoUrl || "",
-    priceUsd: getTokenPriceUsd(info),
-    marketCapUsd: toNumber(details.market_cap_usd || info?.market_cap_usd || info?.marketCapUsd),
-    liquidityUsd: toNumber(metrics.liquidity_usd || info?.liquidity_usd || info?.liquidityUsd),
+    priceUsd: toNumber(market.priceUsd) || infoPriceUsd,
+    marketCapUsd: toNumber(market.marketCapUsd) || infoMarketCapUsd || infoFdvUsd,
+    fdvUsd: toNumber(market.fdvUsd) || infoFdvUsd,
+    liquidityUsd: toNumber(metrics.liquidity_usd || info?.liquidity_usd || info?.liquidityUsd) || toNumber(market.liquidityUsd),
     holderCount: toNumber(metrics.total_holders || info?.holder_count || info?.holderCount),
-    volumeUsd: toNumber(metrics.volume_total_usd || metrics.volume_usd || info?.volume_usd)
+    volumeUsd: toNumber(metrics.volume_total_usd || metrics.volume_usd || info?.volume_usd),
+    priceSource: market.source || (infoPriceUsd > 0 || infoMarketCapUsd > 0 || infoFdvUsd > 0 ? "nansen" : "none")
+  };
+}
+
+async function getTokenMarketSnapshot({ chain, tokenAddress, tokenInfoResult }) {
+  const tokenInfo = tokenInfoResult || {};
+  const nansenInfoMarket = {
+    priceUsd: getTokenPriceUsd(tokenInfo),
+    marketCapUsd: getTokenMarketCapUsd(tokenInfo),
+    fdvUsd: getTokenFdvUsd(tokenInfo),
+    source: "nansen"
+  };
+
+  let nansenOhlcvMarket = {
+    priceUsd: 0,
+    marketCapUsd: 0
+  };
+
+  if (String(chain).toLowerCase() === "solana") {
+    try {
+      nansenOhlcvMarket = getLatestOhlcvSnapshot(await getSolanaTokenOhlcv({ tokenAddress, timeframe: "1h" }));
+    } catch (error) {
+      console.error("Failed to load Nansen token OHLCV market data:", error.message);
+    }
+  }
+
+  const nansenMarket = {
+    priceUsd: nansenInfoMarket.priceUsd || nansenOhlcvMarket.priceUsd,
+    marketCapUsd: nansenInfoMarket.marketCapUsd || nansenOhlcvMarket.marketCapUsd,
+    fdvUsd: nansenInfoMarket.fdvUsd,
+    source: "nansen"
+  };
+
+  if (nansenMarket.priceUsd > 0 && (nansenMarket.marketCapUsd > 0 || nansenMarket.fdvUsd > 0)) {
+    return {
+      ...nansenMarket,
+      marketCapUsd: nansenMarket.marketCapUsd || nansenMarket.fdvUsd
+    };
+  }
+
+  const dexMarket = await getDexscreenerTokenSnapshot({ chain, tokenAddress });
+
+  return {
+    priceUsd: nansenMarket.priceUsd || dexMarket.priceUsd,
+    marketCapUsd: nansenMarket.marketCapUsd || nansenMarket.fdvUsd || dexMarket.marketCapUsd,
+    fdvUsd: nansenMarket.fdvUsd || dexMarket.fdvUsd,
+    liquidityUsd: dexMarket.liquidityUsd,
+    source: nansenMarket.priceUsd > 0 || nansenMarket.marketCapUsd > 0 || nansenMarket.fdvUsd > 0
+      ? "nansen+dexscreener"
+      : dexMarket.source
   };
 }
 
@@ -391,13 +560,18 @@ async function analyzeWatchToken({ chain = "solana", tokenAddress, watchCount = 
     readOptional("Token Holders", () => getTokenHolders({ chain, token: tokenAddress }), [])
   ]);
 
-  const tokenInfo = summarizeTokenInfo(tokenInfoResult.data || {});
+  const marketResult = await readOptional(
+    "Token Market Data",
+    () => getTokenMarketSnapshot({ chain, tokenAddress, tokenInfoResult: tokenInfoResult.data || {} }),
+    {}
+  );
+  const tokenInfo = summarizeTokenInfo(tokenInfoResult.data || {}, marketResult.data || {});
   const dexTrades = summarizeDexTrades(dexTradesResult.data || []);
   const flow = summarizeFlowIntelligence(flowResult.data || []);
   const holders = summarizeHolders(holdersResult.data || []);
   const netflowToken = findNetflowToken(netflowResult.data || [], tokenAddress);
   const buyerQuality = await analyzeBuyerQuality(dexTrades);
-  const fetchFailures = [tokenInfoResult, dexTradesResult, netflowResult, flowResult, holdersResult]
+  const fetchFailures = [tokenInfoResult, marketResult, dexTradesResult, netflowResult, flowResult, holdersResult]
     .filter((result) => !result.ok)
     .map((result) => result.error);
   const scoring = scoreWatchToken({
@@ -424,23 +598,14 @@ async function analyzeWatchToken({ chain = "solana", tokenAddress, watchCount = 
   };
 }
 
-function calculateChange({ addedPriceUsd, addedMarketCapUsd, currentPriceUsd, currentMarketCapUsd }) {
+function calculateChange({ addedPriceUsd, currentPriceUsd }) {
   const addedPrice = toNumber(addedPriceUsd);
   const currentPrice = toNumber(currentPriceUsd);
-  const addedMarketCap = toNumber(addedMarketCapUsd);
-  const currentMarketCap = toNumber(currentMarketCapUsd);
 
   if (addedPrice > 0 && currentPrice > 0) {
     return {
       basis: "price",
       changeRate: (currentPrice - addedPrice) / addedPrice
-    };
-  }
-
-  if (addedMarketCap > 0 && currentMarketCap > 0) {
-    return {
-      basis: "marketCap",
-      changeRate: (currentMarketCap - addedMarketCap) / addedMarketCap
     };
   }
 
@@ -459,22 +624,31 @@ async function buildWatchlistView(items) {
       () => getTokenInfo({ chain: item.chain || "solana", token: item.tokenAddress }),
       {}
     );
-    const currentInfo = summarizeTokenInfo(result.data || {});
+    const marketResult = await readOptional(
+      "Watchlist Market Data",
+      () => getTokenMarketSnapshot({
+        chain: item.chain || "solana",
+        tokenAddress: item.tokenAddress,
+        tokenInfoResult: result.data || {}
+      }),
+      {}
+    );
+    const currentInfo = summarizeTokenInfo(result.data || {}, marketResult.data || {});
     const change = calculateChange({
       addedPriceUsd: item.addedPriceUsd,
-      addedMarketCapUsd: item.addedMarketCapUsd,
-      currentPriceUsd: currentInfo.priceUsd,
-      currentMarketCapUsd: currentInfo.marketCapUsd
+      currentPriceUsd: currentInfo.priceUsd
     });
 
     viewItems.push({
       ...item,
       currentPriceUsd: currentInfo.priceUsd,
       currentMarketCapUsd: currentInfo.marketCapUsd,
+      currentFdvUsd: currentInfo.fdvUsd,
       currentLiquidityUsd: currentInfo.liquidityUsd,
       currentSymbol: currentInfo.symbol,
       currentName: currentInfo.name,
-      fetchFailed: !result.ok,
+      priceSource: currentInfo.priceSource,
+      fetchFailed: !result.ok && !marketResult.ok,
       ...change
     });
   }

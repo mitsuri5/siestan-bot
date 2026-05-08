@@ -38,8 +38,56 @@ let eliteRadarRunning = false;
 
 const slashCommands = [
   new SlashCommandBuilder()
+    .setName("check")
+    .setDescription("Solana tokenをWatch Radarで確認します。")
+    .addStringOption((option) =>
+      option
+        .setName("chain")
+        .setDescription("対象チェーン")
+        .setRequired(true)
+        .addChoices({ name: "solana", value: "solana" })
+    )
+    .addStringOption((option) =>
+      option
+        .setName("token")
+        .setDescription("Solana token address または Dexscreener URL")
+        .setRequired(true)
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("deep")
+    .setDescription("Solana tokenを深掘り分析します。")
+    .addStringOption((option) =>
+      option
+        .setName("chain")
+        .setDescription("対象チェーン")
+        .setRequired(true)
+        .addChoices({ name: "solana", value: "solana" })
+    )
+    .addStringOption((option) =>
+      option
+        .setName("token")
+        .setDescription("Solana token address")
+        .setRequired(true)
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("detail")
+        .setDescription("詳細版の分析カードを表示します。")
+        .setRequired(false)
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("watchlist")
-    .setDescription("Show your Watchlist privately.")
+    .setDescription("Watchlistを自分だけに表示します。")
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("ping")
+    .setDescription("Botの生存確認をします。")
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("help")
+    .setDescription("しえすたんBotのコマンド一覧を表示します。")
     .toJSON()
 ];
 
@@ -213,6 +261,44 @@ async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
   }
 }
 
+function createHelpEmbed() {
+  return new EmbedBuilder()
+    .setColor(0x8fd3ff)
+    .setTitle("しえすたん コマンド一覧")
+    .setDescription("Discordの `/` から選べるコマンドと、互換用の `!` コマンドが使えますにゃ。")
+    .addFields(
+      { name: "/check chain token", value: "Token Checkカードを表示します。`chain` は `solana`、`token` はSolana token addressまたはDexscreener URLです。" },
+      { name: "/deep chain token", value: "トークンを深掘り分析します。`detail` を指定すると詳細版を表示できます。" },
+      { name: "/watchlist", value: "Watchlistを自分だけに表示します。価格は開いたタイミングで更新されます。" },
+      { name: "/ping", value: "Bot が起動中か確認します。" },
+      { name: "/help", value: "このヘルプを表示します。" },
+      { name: "! コマンド", value: "`!check solana TOKEN_ADDRESS`、`!deep solana TOKEN_ADDRESS`、`!discover solana`、`!radar solana`、`!review solana`、`!elite solana`、`!scan solana`、`!nansen-test`、`!about`、`!sleep` も引き続き使えます。" }
+    );
+}
+
+async function createTokenCheckPayload({ chain = "solana", tokenAddress }) {
+  const watchCount = await getWatchCount({ chain, tokenAddress });
+  const analysis = await analyzeWatchToken({
+    chain,
+    tokenAddress,
+    watchCount
+  });
+
+  return {
+    content: "",
+    components: createTokenCheckComponents({ chain, tokenAddress }),
+    embeds: [createTokenCheckEmbed(analysis)]
+  };
+}
+
+async function createDeepAnalysisPayload({ tokenAddress, detail = false }) {
+  const analysis = await analyzeSolanaTokenDeep(tokenAddress);
+  return {
+    content: "",
+    embeds: [detail ? createDeepAnalysisDetailEmbed(analysis) : createDeepAnalysisEmbed(analysis)]
+  };
+}
+
 async function sendUserWatchlist(user, source) {
   const items = await getUserWatchlist(user.id);
   const viewItems = await buildWatchlistView(items);
@@ -246,14 +332,15 @@ async function sendUserWatchlist(user, source) {
 
 async function registerSlashCommands(readyClient) {
   const commands = await readyClient.application.commands.fetch();
-  const watchlistCommand = commands.find((command) => command.name === "watchlist");
 
-  if (watchlistCommand) {
-    await watchlistCommand.edit(slashCommands[0]);
-    return;
+  for (const commandData of slashCommands) {
+    const existingCommand = commands.find((command) => command.name === commandData.name);
+    if (existingCommand) {
+      await existingCommand.edit(commandData);
+    } else {
+      await readyClient.application.commands.create(commandData);
+    }
   }
-
-  await readyClient.application.commands.create(slashCommands[0]);
 }
 
 client.once(Events.ClientReady, async (readyClient) => {
@@ -261,7 +348,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 
   try {
     await registerSlashCommands(readyClient);
-    console.log("Registered /watchlist command.");
+    console.log("Registered slash commands.");
   } catch (error) {
     console.error("Failed to register slash commands:", error);
   }
@@ -269,26 +356,87 @@ client.once(Events.ClientReady, async (readyClient) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isChatInputCommand()) {
-    if (interaction.commandName !== "watchlist") {
-      return;
-    }
-
     try {
-      await interaction.deferReply({ ephemeral: true });
-      await sendUserWatchlist(interaction.user, interaction);
+      if (interaction.commandName === "watchlist") {
+        await interaction.deferReply({ ephemeral: true });
+        await sendUserWatchlist(interaction.user, interaction);
+        return;
+      }
+
+      if (interaction.commandName === "ping") {
+        await interaction.reply("しえすたん起動中ですにゃ。Pong!");
+        return;
+      }
+
+      if (interaction.commandName === "help") {
+        await interaction.reply({ embeds: [createHelpEmbed()] });
+        return;
+      }
+
+      if (interaction.commandName === "check") {
+        const chain = interaction.options.getString("chain", true);
+        const tokenInput = interaction.options.getString("token", true);
+
+        if (chain !== "solana") {
+          await interaction.reply({
+            content: "今は `solana` のみ対応していますにゃ。",
+            ephemeral: true
+          });
+          return;
+        }
+
+        const tokenAddress = extractSolanaTokenAddress(tokenInput);
+        if (!tokenAddress) {
+          await interaction.reply({
+            content: "SolanaのトークンアドレスかDexscreener URLを確認してくださいにゃ。",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+        await interaction.editReply(await createTokenCheckPayload({ chain, tokenAddress }));
+        return;
+      }
+
+      if (interaction.commandName === "deep") {
+        const chain = interaction.options.getString("chain", true);
+        const tokenAddress = interaction.options.getString("token", true);
+        const detail = interaction.options.getBoolean("detail") || false;
+
+        if (chain !== "solana") {
+          await interaction.reply({
+            content: "今は `solana` のみ対応していますにゃ。",
+            ephemeral: true
+          });
+          return;
+        }
+
+        if (!isValidSolanaAddress(tokenAddress)) {
+          await interaction.reply({
+            content: "Solanaのトークンアドレス形式を確認してくださいにゃ。",
+            ephemeral: true
+          });
+          return;
+        }
+
+        await interaction.deferReply();
+        await interaction.editReply(await createDeepAnalysisPayload({ tokenAddress, detail }));
+        return;
+      }
     } catch (error) {
-      console.error("Failed to handle /watchlist command:", error);
+      console.error(`Failed to handle /${interaction.commandName} command:`, error);
       try {
         if (interaction.deferred || interaction.replied) {
-          await interaction.editReply("Watchlistの表示に失敗しました。少し待ってからもう一度試してください。");
+          await interaction.editReply("処理に失敗しましたにゃ。少し待ってからもう一度試してください。");
         } else {
           await interaction.reply({
-            content: "Watchlistの表示に失敗しました。少し待ってからもう一度試してください。",
+            content: "処理に失敗しましたにゃ。少し待ってからもう一度試してください。",
             ephemeral: true
           });
         }
       } catch (replyError) {
-        console.error("Failed to send /watchlist error reply:", replyError);
+        console.error("Failed to send slash command error reply:", replyError);
       }
     }
     return;
@@ -396,24 +544,7 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (message.content === "!help") {
-    const helpEmbed = new EmbedBuilder()
-      .setColor(0x8fd3ff)
-      .setTitle("しえすたん コマンド一覧")
-      .setDescription("使えるコマンドですにゃ。")
-      .addFields(
-        { name: "!ping", value: "Bot が起動中か確認します。" },
-        { name: "!help", value: "使えるコマンド一覧を表示します。" },
-        { name: "!about", value: "しえすたんについて説明します。" },
-        { name: "!sleep", value: "お昼寝したいときのひとことを返します。" },
-        { name: "!nansen-test", value: "Nansen CLI との接続を確認します。" },
-        { name: "!discover solana", value: "Smart Money DEX Tradesから候補を発見します。`--wide --limit 500` / `--wide --target-tokens 700` まで指定できます。" },
-        { name: "!radar solana", value: "G0 DiscoveryからDeep分析まで通した統合レーダーを実行します。`--wide --limit 500` / `--wide --target-tokens 700` まで指定できます。" },
-        { name: "!review solana", value: "過去のAlpha Radarシグナルを答え合わせします。`--top 10` / `--stats` / `--detail` / `--all` / `--24h` / `--7d` / `--mature 4h` も使えます。" },
-        { name: "!scan solana", value: "SolanaのSmart Money流入候補を手動スキャンします。" },
-        { name: "!deep solana TOKEN_ADDRESS", value: "候補トークンを追加データで深掘りします。`--detail` で詳細表示します。" }
-      );
-
-    await message.reply({ embeds: [helpEmbed] });
+    await message.reply({ embeds: [createHelpEmbed()] });
     return;
   }
 
@@ -468,18 +599,7 @@ client.on(Events.MessageCreate, async (message) => {
     const reply = await message.reply("分析中ですにゃ。Watch Radarでトークンを確認しています...");
 
     try {
-      const watchCount = await getWatchCount({ chain: "solana", tokenAddress });
-      const analysis = await analyzeWatchToken({
-        chain: "solana",
-        tokenAddress,
-        watchCount
-      });
-
-      await reply.edit({
-        content: "",
-        components: createTokenCheckComponents({ chain: "solana", tokenAddress }),
-        embeds: [createTokenCheckEmbed(analysis)]
-      });
+      await reply.edit(await createTokenCheckPayload({ chain: "solana", tokenAddress }));
     } catch (error) {
       console.error("Failed to run Watch Radar token check:", error);
       await reply.edit("Watch Radarの確認に失敗しましたにゃ。");
@@ -682,11 +802,7 @@ client.on(Events.MessageCreate, async (message) => {
     const reply = await message.reply("候補トークンを深掘り分析中ですにゃ...");
 
     try {
-      const analysis = await analyzeSolanaTokenDeep(tokenAddress);
-      await reply.edit({
-        content: "",
-        embeds: [useDetail ? createDeepAnalysisDetailEmbed(analysis) : createDeepAnalysisEmbed(analysis)]
-      });
+      await reply.edit(await createDeepAnalysisPayload({ tokenAddress, detail: useDetail }));
     } catch (error) {
       console.error("Failed to run deep Solana token analysis:", error);
       await reply.edit("深掘り分析に失敗しましたにゃ。");

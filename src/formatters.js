@@ -326,14 +326,22 @@ function createTokenCheckComponents({ chain = "solana", tokenAddress }) {
 }
 
 function createWatchlistComponents(items) {
-  const buttons = items.slice(0, 5).map((item) =>
-    new ButtonBuilder()
-      .setCustomId(`watchremove:${item.chain || "solana"}:${item.tokenAddress}`)
-      .setLabel(`Remove ${(item.symbol || item.currentSymbol || shortenAddress(item.tokenAddress)).slice(0, 60)}`)
-      .setStyle(ButtonStyle.Danger)
-  );
+  const buttons = items.slice(0, 10).map((item) => {
+    const labelToken = item.currentSymbol || item.symbol || "";
+    const label = labelToken ? `${labelToken}を解除` : "Watch解除";
 
-  return buttons.length > 0 ? [new ActionRowBuilder().addComponents(...buttons)] : [];
+    return new ButtonBuilder()
+      .setCustomId(`watchremove:${item.chain || "solana"}:${item.tokenAddress}`)
+      .setLabel(label.slice(0, 40))
+      .setStyle(ButtonStyle.Danger);
+  });
+
+  const rows = [];
+  for (let index = 0; index < buttons.length; index += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(index, index + 5)));
+  }
+
+  return rows;
 }
 
 function addInlineField(embed, name, value) {
@@ -1188,17 +1196,17 @@ function createWatchlistEmbedsLegacy(items, user) {
 }
 
 function createWatchlistEmbeds(items, user) {
-  const title = user?.username ? `${user.username}'s Watchlist` : "Your Watchlist";
+  const title = user?.username ? `${user.username}のWatchlist` : "あなたのWatchlist";
   const embed = new EmbedBuilder()
     .setColor(0xf7c948)
     .setTitle(title)
-    .setDescription("Private Watchlist view. Prices are refreshed when this view is opened.")
+    .setDescription("自分だけに表示されています。価格は開いたタイミングで更新されます。")
     .setTimestamp(new Date());
 
   if (items.length === 0) {
     embed.addFields({
-      name: "Watchlist is empty",
-      value: "Use `!check solana TOKEN_ADDRESS` and press `Watch` to add a token."
+      name: "Watchlistは空です",
+      value: "`!check solana TOKEN_ADDRESS` で確認して、`Watch` ボタンから追加できます。"
     });
     return [embed];
   }
@@ -1208,24 +1216,17 @@ function createWatchlistEmbeds(items, user) {
     const name = item.currentName || item.name || "";
     const addedAt = new Date(item.addedAt || 0).getTime();
     const watchedSince = Number.isFinite(addedAt)
-      ? `${formatDateTime(item.addedAt)} (${formatElapsed(Date.now() - addedAt)} ago)`
+      ? `${formatDateTime(item.addedAt)}（${formatElapsed(Date.now() - addedAt)}前）`
       : NO_DATA;
-    const fallbackChange = item.basis === "marketCap"
-      ? `MCAP change: ${formatChangeRate(item.changeRate)}`
-      : `Change: ${formatChangeRate(item.changeRate)}`;
 
     embed.addFields({
       name: `${symbol}${name && name !== symbol ? ` | ${name}` : ""}`.slice(0, 256),
       value: truncate(
         [
-          `Symbol: ${symbol}`,
-          `Added price: ${formatTokenPrice(item.addedPriceUsd)}`,
-          `Current price: ${formatTokenPrice(item.currentPriceUsd)}`,
-          `% change: ${formatChangeRate(item.changeRate)}`,
-          `Watched since: ${watchedSince}`,
-          `CA: \`${item.tokenAddress}\``,
-          fallbackChange,
-          `Chart: https://dexscreener.com/${item.chain || "solana"}/${item.tokenAddress}`
+          `変化率: ${formatChangeRate(item.changeRate)}`,
+          `追加時価格: ${formatTokenPrice(item.addedPriceUsd)}`,
+          `Watch開始: ${watchedSince}`,
+          `チャート: [Dexscreener](https://dexscreener.com/${item.chain || "solana"}/${item.tokenAddress})`
         ].join("\n"),
         1024
       ),
@@ -1234,9 +1235,10 @@ function createWatchlistEmbeds(items, user) {
   }
 
   if (items.length > 10) {
+    const remainingCount = items.length - 10;
     embed.addFields({
-      name: "Display limit",
-      value: `Showing the first 10 of ${formatTradeCount(items.length)} watched tokens.`
+      name: "ほか",
+      value: `ほか${formatTradeCount(remainingCount)}件あります。`
     });
   }
 
