@@ -3,10 +3,22 @@ const {
   getTokenDexTrades,
   getTokenFlowIntelligence,
   getTokenHolders,
-  getTokenInfo
+  getTokenInfo,
+  getWalletPnlSummary
 } = require("./nansen");
+const { readSm90dCache, writeSm90dCache } = require("./storage");
 
 const SOLANA_ADDRESS_PATTERN = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+const SM90D_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const STRONG_SM_BUY_VALUE_USD = 10000;
+const STRONG_SM_LABELS = [
+  "90d smart trader",
+  "180d smart trader",
+  "smart trader",
+  "fund",
+  "whale",
+  "smart money"
+];
 
 function isValidSolanaAddress(address) {
   return SOLANA_ADDRESS_PATTERN.test(address);
@@ -15,6 +27,36 @@ function isValidSolanaAddress(address) {
 function toNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? number : 0;
+}
+
+function normalizeLabel(label) {
+  return String(label || "").toLowerCase();
+}
+
+function isStrongSmLabel(label) {
+  const normalized = normalizeLabel(label);
+  return STRONG_SM_LABELS.some((strongLabel) => normalized.includes(strongLabel));
+}
+
+function normalizePercent(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return 0;
+  }
+
+  return Math.abs(number) > 1 ? number / 100 : number;
+}
+
+function getTradeValueUsd(row) {
+  return toNumber(row.estimated_value_usd || row.trade_value_usd || row.value_usd);
+}
+
+function getTraderAddress(row) {
+  return row.trader_address || row.wallet_address || row.address || row.wallet;
+}
+
+function getTraderLabel(row) {
+  return row.trader_address_label || row.wallet_label || row.address_label || row.label || "";
 }
 
 function findNetflowToken(rows, tokenAddress) {
@@ -100,14 +142,34 @@ function summarizeHolders(rows) {
 }
 
 function summarizeDexTrades(rows) {
+  const buyersByAddress = new Map();
   const summary = rows.reduce(
     (acc, row) => {
       const action = String(row.action || "").toUpperCase();
-      const valueUsd = toNumber(row.estimated_value_usd);
+      const valueUsd = getTradeValueUsd(row);
 
       if (action === "BUY") {
         acc.buyCount += 1;
         acc.buyValueUsd += valueUsd;
+
+        const address = getTraderAddress(row);
+        if (address) {
+          const key = String(address).toLowerCase();
+          const existing = buyersByAddress.get(key) || {
+            address: String(address),
+            label: String(getTraderLabel(row) || ""),
+            buyCount: 0,
+            buyValueUsd: 0
+          };
+
+          existing.buyCount += 1;
+          existing.buyValueUsd += valueUsd;
+          if (!existing.label) {
+            existing.label = String(getTraderLabel(row) || "");
+          }
+
+          buyersByAddress.set(key, existing);
+        }
       }
 
       if (action === "SELL") {
@@ -119,10 +181,31 @@ function summarizeDexTrades(rows) {
     },
     { buyCount: 0, buyValueUsd: 0, sellCount: 0, sellValueUsd: 0 }
   );
+  const smBuyers = Array.from(buyersByAddress.values()).sort((a, b) => b.buyValueUsd - a.buyValueUsd);
+  const strongBuyers = smBuyers.filter((buyer) => isStrongSmLabel(buyer.label));
+  const strongSmBuyValueUsd = strongBuyers.reduce((sum, buyer) => sum + buyer.buyValueUsd, 0);
+  const smBuyerLabels = [...new Set(smBuyers.map((buyer) => buyer.label).filter(Boolean))].slice(0, 8);
+  let sm90dQualityLevel = "unknown";
+
+  if (smBuyers.length > 0 && smBuyerLabels.length === 0) {
+    sm90dQualityLevel = "unknown";
+  } else if (strongBuyers.length >= 2 || strongSmBuyValueUsd >= STRONG_SM_BUY_VALUE_USD) {
+    sm90dQualityLevel = "strong";
+  } else if (strongBuyers.length >= 1) {
+    sm90dQualityLevel = "medium";
+  } else if (smBuyers.length > 0) {
+    sm90dQualityLevel = "weak";
+  }
 
   return {
     rowCount: rows.length,
     wallets: collectValues(rows, ["trader_address_label", "wallet", "address", "trader_address"]).slice(0, 3),
+    smBuyers,
+    smBuyerCount: smBuyers.length,
+    strongSmBuyerCount: strongBuyers.length,
+    strongSmBuyValueUsd,
+    smBuyerLabels,
+    sm90dQualityLevel,
     ...summary
   };
 }
@@ -199,7 +282,129 @@ function getConfidence(score, shouldDowngrade) {
   return levels[index];
 }
 
-function scoreDeepAnalysis({ netflowToken, tokenInfo, flow, holders, dexTrades }) {
+function isFreshCacheEntry(entry) {
+  const cachedAt = new Date(entry?.cachedAt || 0).getTime();
+  return Number.isFinite(cachedAt) && Date.now() - cachedAt < SM90D_CACHE_TTL_MS;
+}
+
+async function getCachedWalletPnlSummary({ address, chain, cache }) {
+  const cacheKey = `${chain}:${String(address).toLowerCase()}`;
+  const cached = cache[cacheKey];
+
+  if (isFreshCacheEntry(cached)) {
+    return cached.data;
+  }
+
+  const data = await getWalletPnlSummary({ address, chain, days: 90 });
+  cache[cacheKey] = {
+    cachedAt: new Date().toISOString(),
+    data
+  };
+
+  return data;
+}
+
+async function analyzeBuyerQuality({ chain, dexTrades }) {
+  const buyers = (dexTrades.smBuyers || []).slice(0, 3);
+  const attemptedCount = buyers.length;
+  const warnings = [];
+
+  if (attemptedCount === 0) {
+    return {
+      attemptedCount: 0,
+      checkedCount: 0,
+      failedCount: 0,
+      goodCount: 0,
+      negativePnlCount: 0,
+      averageWinRate: 0,
+      totalRealizedPnlUsd: 0,
+      averageRealizedPnlPercent: 0,
+      level: dexTrades.sm90dQualityLevel || "unknown",
+      warnings: dexTrades.smBuyerCount > 0 ? ["trader labelのみでProfiler未確認ですにゃ"] : []
+    };
+  }
+
+  const cache = await readSm90dCache();
+  let cacheChanged = false;
+  const profiles = [];
+  let failedCount = 0;
+
+  for (const buyer of buyers) {
+    try {
+      const before = JSON.stringify(cache[`${chain}:${String(buyer.address).toLowerCase()}`] || null);
+      const data = await getCachedWalletPnlSummary({ address: buyer.address, chain, cache });
+      const after = JSON.stringify(cache[`${chain}:${String(buyer.address).toLowerCase()}`] || null);
+      cacheChanged = cacheChanged || before !== after;
+      profiles.push({
+        address: buyer.address,
+        label: buyer.label,
+        buyValueUsd: buyer.buyValueUsd,
+        realizedPnlUsd: toNumber(data.realized_pnl_usd),
+        realizedPnlPercent: normalizePercent(data.realized_pnl_percent),
+        winRate: normalizePercent(data.win_rate),
+        tradedTokenCount: toNumber(data.traded_token_count),
+        tradedTimes: toNumber(data.traded_times)
+      });
+    } catch (error) {
+      failedCount += 1;
+      console.error("Failed to load Smart Money 90D profile:", buyer.address, error.message);
+    }
+  }
+
+  if (cacheChanged) {
+    await writeSm90dCache(cache);
+  }
+
+  const checkedCount = profiles.length;
+  const goodProfiles = profiles.filter((profile) =>
+    profile.realizedPnlUsd > 0 && (profile.winRate >= 0.55 || profile.realizedPnlPercent > 0)
+  );
+  const negativePnlCount = profiles.filter((profile) => profile.realizedPnlUsd < 0).length;
+  const averageWinRate = checkedCount > 0
+    ? profiles.reduce((sum, profile) => sum + profile.winRate, 0) / checkedCount
+    : 0;
+  const averageRealizedPnlPercent = checkedCount > 0
+    ? profiles.reduce((sum, profile) => sum + profile.realizedPnlPercent, 0) / checkedCount
+    : 0;
+  const totalRealizedPnlUsd = profiles.reduce((sum, profile) => sum + profile.realizedPnlUsd, 0);
+  let level = dexTrades.sm90dQualityLevel || "unknown";
+
+  if (goodProfiles.length >= 2 || (checkedCount > 0 && averageWinRate >= 0.55 && totalRealizedPnlUsd > 0)) {
+    level = "strong";
+  } else if (goodProfiles.length >= 1 || ["strong", "medium"].includes(level)) {
+    level = "medium";
+  } else if (checkedCount > 0 || dexTrades.smBuyerCount > 0) {
+    level = "weak";
+  }
+
+  if (attemptedCount > 0 && checkedCount < attemptedCount) {
+    warnings.push("90D成績を確認できたウォレットが少ないですにゃ");
+  }
+
+  if (negativePnlCount > 0) {
+    warnings.push("一部ウォレットの90D PnLがマイナスですにゃ");
+  }
+
+  if (checkedCount === 0 && dexTrades.smBuyerCount > 0) {
+    warnings.push("trader labelのみでProfiler未確認ですにゃ");
+  }
+
+  return {
+    attemptedCount,
+    checkedCount,
+    failedCount,
+    goodCount: goodProfiles.length,
+    negativePnlCount,
+    averageWinRate,
+    totalRealizedPnlUsd,
+    averageRealizedPnlPercent,
+    profiles,
+    level,
+    warnings
+  };
+}
+
+function scoreDeepAnalysis({ netflowToken, tokenInfo, flow, holders, dexTrades, buyerQuality }) {
   const good = [];
   const warnings = [];
   const gates = {
@@ -245,6 +450,26 @@ function scoreDeepAnalysis({ netflowToken, tokenInfo, flow, holders, dexTrades }
     good.push("買い手や取引データに一定の広がりがありますにゃ");
   } else {
     warnings.push("買い手の質を判断するデータがまだ薄いにゃ");
+  }
+
+  if (dexTrades.strongSmBuyerCount >= 2) {
+    gates.g2BuyerQuality = true;
+    score += 5;
+    good.push("強めのSmart Moneyラベルを持つ買い手が複数いますにゃ");
+  }
+
+  if (buyerQuality?.level === "strong") {
+    gates.g2BuyerQuality = true;
+    score += 10;
+    good.push("買い手Smart Moneyの90D成績は良好寄りですにゃ");
+  } else if (buyerQuality?.level === "medium") {
+    gates.g2BuyerQuality = true;
+    score += 5;
+    good.push("買い手Smart Moneyの90D成績を一部確認できていますにゃ");
+  }
+
+  for (const warning of buyerQuality?.warnings || []) {
+    warnings.push(warning);
   }
 
   if (tokenInfo.holderCount >= 100 || holders.rowCount >= 10) {
@@ -321,12 +546,14 @@ async function analyzeSolanaTokenDeep(tokenAddress) {
   const flow = summarizeFlowIntelligence(flowResult.data);
   const holders = summarizeHolders(holdersResult.data);
   const dexTrades = summarizeDexTrades(dexTradesResult.data);
+  const buyerQuality = await analyzeBuyerQuality({ chain, dexTrades });
   const scoring = scoreDeepAnalysis({
     netflowToken,
     tokenInfo,
     flow,
     holders,
-    dexTrades
+    dexTrades,
+    buyerQuality
   });
 
   if (!netflowToken) {
@@ -347,6 +574,7 @@ async function analyzeSolanaTokenDeep(tokenAddress) {
     flow,
     holders,
     dexTrades,
+    buyerQuality,
     ...scoring
   };
 }

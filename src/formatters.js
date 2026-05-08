@@ -117,6 +117,15 @@ function formatTokenPrice(value) {
   }).format(number);
 }
 
+function formatChangeRate(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    return "評価保留";
+  }
+
+  return formatSignedPercent(number);
+}
+
 function formatDateTime(value) {
   if (!value) {
     return NO_DATA;
@@ -243,6 +252,21 @@ function formatHolders(holderCount, smartMoneyHolderCount) {
   return holders;
 }
 
+function formatBuyerQuality(buyerQuality = {}, gates = {}) {
+  const checkedCount = Number(buyerQuality.checkedCount || 0);
+  const attemptedCount = Number(buyerQuality.attemptedCount || 0);
+  const goodCount = Number(buyerQuality.goodCount || 0);
+  const averageWinRate = Number(buyerQuality.averageWinRate);
+  const totalRealizedPnlUsd = Number(buyerQuality.totalRealizedPnlUsd);
+
+  return [
+    `90D良好SM: ${formatTradeCount(goodCount)}/${formatTradeCount(attemptedCount || checkedCount)}`,
+    `平均Win Rate: ${Number.isFinite(averageWinRate) && averageWinRate > 0 ? formatPercent(averageWinRate) : NO_DATA}`,
+    `90D realized PnL: ${Number.isFinite(totalRealizedPnlUsd) && totalRealizedPnlUsd !== 0 ? formatSignedUsd(totalRealizedPnlUsd) : NO_DATA}`,
+    `判定: ${formatGate(gates.g2BuyerQuality)}`
+  ].join("\n");
+}
+
 function getDiscoveryButtonLabel(discovery, index) {
   const symbolOrAddress = discovery.symbol || shortenAddress(discovery.address);
   return `${index + 1}位 ${symbolOrAddress}`.slice(0, 80);
@@ -276,6 +300,40 @@ function createTokenCardComponents(address) {
         .setURL(`https://dexscreener.com/solana/${address}`)
     )
   ];
+}
+
+function createTokenCheckComponents({ chain = "solana", tokenAddress }) {
+  if (!tokenAddress) {
+    return [];
+  }
+
+  return [
+    new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(`watch:${chain}:${tokenAddress}`)
+        .setLabel("⭐ Watch")
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId(`deep:${chain}:${tokenAddress}`)
+        .setLabel("Deep分析")
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setLabel("Dexscreener")
+        .setStyle(ButtonStyle.Link)
+        .setURL(`https://dexscreener.com/${chain}/${tokenAddress}`)
+    )
+  ];
+}
+
+function createWatchlistComponents(items) {
+  const buttons = items.slice(0, 5).map((item) =>
+    new ButtonBuilder()
+      .setCustomId(`watchremove:${item.chain || "solana"}:${item.tokenAddress}`)
+      .setLabel(`Remove ${(item.symbol || item.currentSymbol || shortenAddress(item.tokenAddress)).slice(0, 60)}`)
+      .setStyle(ButtonStyle.Danger)
+  );
+
+  return buttons.length > 0 ? [new ActionRowBuilder().addComponents(...buttons)] : [];
 }
 
 function addInlineField(embed, name, value) {
@@ -915,6 +973,220 @@ function createRadarEmbeds(results, stats = {}) {
   return [overview, ...cards];
 }
 
+function createEliteEmbeds(results, stats = {}) {
+  const overview = new EmbedBuilder()
+    .setColor(0xd9b8ff)
+    .setTitle("しえすたん Elite SM Radar")
+    .setDescription("90D成績が良いSmart Moneyが多く買っている候補ですにゃ。投資助言ではないにゃ。")
+    .addFields({
+      name: "スキャン概要",
+      value: [
+        `評価したSMウォレット数: ${formatTradeCount(stats.evaluatedWalletCount ?? 0)}`,
+        `Profiler確認成功: ${formatTradeCount(stats.profilerEvaluatedCount ?? 0)}`,
+        `Elite SMに選ばれた数: ${formatTradeCount(stats.eliteWalletCount ?? 0)} / ${formatTradeCount(stats.requestedTopWallets ?? 50)}`,
+        `集計後トークン数: ${formatTradeCount(stats.tokenCount ?? 0)}`,
+        `Token Info補完件数: ${formatTradeCount(stats.tokenInfoEnrichedCount ?? 0)}`,
+        `表示件数: ${formatTradeCount(stats.displayedCount ?? results.length)}`,
+        `取得SM取引数: ${formatTradeCount(stats.dexTradeCount ?? 0)}`,
+        `キャッシュ利用数: ${formatTradeCount(stats.cacheHitCount ?? 0)}`,
+        `Profiler失敗数: ${formatTradeCount(stats.profilerFailedCount ?? 0)}`,
+        `実行時間: ${formatDuration(stats.durationMs)}`,
+        `取得状態: ${stats.partialFailure ? "一部取得失敗（途中結果）" : "正常"}`,
+        `停止理由: ${stats.stopReason || "なし"}`
+      ].join("\n")
+    })
+    .setTimestamp(new Date());
+
+  if (results.length === 0) {
+    overview.addFields({
+      name: "候補なし",
+      value: "Elite SMの買い候補は見つかりませんでしたにゃ。"
+    });
+    return [overview];
+  }
+
+  const cards = results.slice(0, 5).map((token, index) => {
+    const titleSymbol = token.symbol || UNKNOWN_SYMBOL;
+    const titleName = token.name && token.name !== titleSymbol ? ` | ${token.name}` : "";
+    const embed = new EmbedBuilder()
+      .setColor(0xd9b8ff)
+      .setTitle(`${index + 1}位 ${titleSymbol}${titleName}`.slice(0, 256))
+      .setDescription([
+        "Chain: `solana`",
+        `CA: \`${token.address || NO_DATA}\``
+      ].join("\n"))
+      .setTimestamp(new Date());
+
+    const imageUrl = getTokenImageUrl(token);
+    if (imageUrl) {
+      embed.setThumbnail(imageUrl);
+    }
+
+    addInlineField(embed, "🧠 Elite SM買い人数", `${formatTradeCount(token.eliteBuyerCount)} / ${formatTradeCount(stats.eliteWalletCount ?? 0)}`);
+    addInlineField(embed, "💸 Elite SM売買金額", `買い ${formatTradeUsd(token.eliteBuyValueUsd)} / 売り ${formatTradeUsd(token.eliteSellValueUsd)}`);
+    addInlineField(embed, "📈 Elite SMネット買い", formatSignedUsd(token.eliteNetBuyValueUsd));
+    addInlineField(embed, "🧪 買い手の質", `平均Win Rate ${formatPercent(token.averageWinRate)} / 平均90D PnL ${formatSignedUsd(token.averageRealizedPnlUsd)}`);
+    addInlineField(embed, "💧 Liquidity", formatUsd(token.liquidityUsd));
+    addInlineField(embed, "💰 MCAP", formatUsd(token.marketCapUsd));
+    addInlineField(embed, "👥 Holders", formatHolders(token.holderCount));
+    addInlineField(embed, "📈 Chart", `[Dexscreener](https://dexscreener.com/solana/${token.address})`);
+    addInlineField(embed, "🧪 Deep", "ボタンから実行");
+
+    embed.addFields({
+      name: "注意点",
+      value: truncate(formatList(token.warnings?.slice(0, 2), NO_WARNINGS), 500),
+      inline: false
+    });
+
+    return embed;
+  });
+
+  return [overview, ...cards];
+}
+
+function createTokenCheckEmbed(analysis) {
+  const tokenInfo = analysis.tokenInfo || {};
+  const dexTrades = analysis.dexTrades || {};
+  const flow = analysis.flow || {};
+  const holders = analysis.holders || {};
+  const buyerQuality = analysis.buyerQuality || {};
+  const netflow = analysis.netflowToken || {};
+  const symbol = tokenInfo.symbol || UNKNOWN_SYMBOL;
+  const titleName = tokenInfo.name && tokenInfo.name !== symbol ? ` | ${tokenInfo.name}` : "";
+  const embed = new EmbedBuilder()
+    .setColor(0xf7c948)
+    .setTitle(`しえすたん Watch Radar | ${symbol}${titleName}`.slice(0, 256))
+    .setDescription([
+      `Chain: \`${analysis.chain || "solana"}\``,
+      `CA: \`${analysis.tokenAddress || NO_DATA}\``,
+      `Watch中: ${formatTradeCount(analysis.watchCount || 0)}人`
+    ].join("\n"))
+    .setTimestamp(new Date());
+
+  const imageUrl = getTokenImageUrl(tokenInfo);
+  if (imageUrl) {
+    embed.setThumbnail(imageUrl);
+  }
+
+  addInlineField(embed, "観察スコア", `${analysis.score ?? NO_DATA}/100`);
+  addInlineField(embed, "Price", tokenInfo.priceUsd > 0 ? formatTokenPrice(tokenInfo.priceUsd) : NO_DATA);
+  addInlineField(embed, "MCAP", formatUsd(tokenInfo.marketCapUsd));
+  addInlineField(embed, "Liquidity", formatUsd(tokenInfo.liquidityUsd));
+  addInlineField(embed, "Holders", formatHolders(tokenInfo.holderCount, holders.smartMoneyHolderCount));
+  addInlineField(
+    embed,
+    "Smart Money Netflow",
+    [
+      `24h ${formatSignedUsd(netflow.net_flow_24h_usd)}`,
+      `7d ${formatSignedUsd(netflow.net_flow_7d_usd)}`,
+      `traders ${formatTradeCount(netflow.trader_count || 0)}`
+    ].join(" / ")
+  );
+  addInlineField(
+    embed,
+    "SM DEX Trades",
+    [
+      `買い ${formatTradeCount(dexTrades.buyCount || 0)} / ${formatTradeUsd(dexTrades.buyValueUsd)}`,
+      `売り ${formatTradeCount(dexTrades.sellCount || 0)} / ${formatTradeUsd(dexTrades.sellValueUsd)}`
+    ].join("\n")
+  );
+  addInlineField(
+    embed,
+    "Flow Intelligence",
+    [
+      `Net ${formatSignedUsd(flow.netFlowUsd)}`,
+      `Wallets ${formatTradeCount(flow.walletCount || 0)}`,
+      `Labels ${formatList(flow.labels, NO_DATA)}`
+    ].join("\n")
+  );
+  addInlineField(
+    embed,
+    "Holder概要",
+    [
+      `上位 ${formatTradeCount(holders.rowCount || 0)}件`,
+      `SM系 ${formatTradeCount(holders.smartMoneyHolderCount || 0)}`,
+      `Value ${formatUsd(holders.totalValueUsd)}`
+    ].join("\n")
+  );
+  embed.addFields({
+    name: "90D Buyer Quality",
+    value: truncate(
+      [
+        `確認: ${formatTradeCount(buyerQuality.checkedCount || 0)} / ${formatTradeCount(buyerQuality.attemptedCount || 0)}`,
+        `良好: ${formatTradeCount(buyerQuality.goodCount || 0)}`,
+        `平均Win Rate: ${buyerQuality.averageWinRate ? formatPercent(buyerQuality.averageWinRate) : NO_DATA}`,
+        `Realized PnL合計: ${formatSignedUsd(buyerQuality.totalRealizedPnlUsd)}`
+      ].join("\n"),
+      500
+    ),
+    inline: false
+  });
+  embed.addFields({
+    name: "リスク注意点",
+    value: truncate(formatList(analysis.warnings, NO_WARNINGS), 700),
+    inline: false
+  });
+
+  return embed;
+}
+
+function createWatchlistEmbeds(items, user) {
+  const title = user?.username ? `${user.username} のWatchlist` : "Your Watchlist";
+  const embed = new EmbedBuilder()
+    .setColor(0xf7c948)
+    .setTitle(title)
+    .setDescription("追加時からの変化率です。価格が取れない場合はMCAPで評価します。")
+    .setTimestamp(new Date());
+
+  if (items.length === 0) {
+    embed.addFields({
+      name: "Watchlistは空です",
+      value: "`!check solana TOKEN_ADDRESS` から ⭐ Watch を押すと追加できます。"
+    });
+    return [embed];
+  }
+
+  for (const item of items.slice(0, 10)) {
+    const symbol = item.currentSymbol || item.symbol || UNKNOWN_SYMBOL;
+    const name = item.currentName || item.name || "";
+    const addedAt = new Date(item.addedAt || 0).getTime();
+    const basisLabel = item.basis === "price" ? "価格" : item.basis === "marketCap" ? "MCAP" : "評価";
+    const addedLine = item.basis === "price"
+      ? `追加時価格: ${formatTokenPrice(item.addedPriceUsd)}`
+      : `追加時MCAP: ${formatUsd(item.addedMarketCapUsd)}`;
+    const currentLine = item.basis === "price"
+      ? `現在価格: ${formatTokenPrice(item.currentPriceUsd)}`
+      : item.basis === "marketCap"
+        ? `現在MCAP: ${formatUsd(item.currentMarketCapUsd)}`
+        : "現在値: 評価保留";
+
+    embed.addFields({
+      name: `${symbol}${name && name !== symbol ? ` | ${name}` : ""}`.slice(0, 256),
+      value: truncate(
+        [
+          `CA: \`${item.tokenAddress}\``,
+          addedLine,
+          currentLine,
+          `${basisLabel}変化率: ${formatChangeRate(item.changeRate)}`,
+          `Watch開始: ${Number.isFinite(addedAt) ? formatElapsed(Date.now() - addedAt) : NO_DATA}`,
+          `Chart: https://dexscreener.com/${item.chain || "solana"}/${item.tokenAddress}`
+        ].join("\n"),
+        1024
+      ),
+      inline: false
+    });
+  }
+
+  if (items.length > 10) {
+    embed.addFields({
+      name: "表示上限",
+      value: `先頭10件のみ表示しています。合計 ${formatTradeCount(items.length)} 件です。`
+    });
+  }
+
+  return [embed];
+}
+
 function formatReviewToken(item) {
   const symbol = item.symbol || UNKNOWN_SYMBOL;
   const change = item.evaluable ? formatSignedPercent(item.changeRate) : "評価保留";
@@ -1404,6 +1676,80 @@ function createReviewEmbedReadable(review, options = {}) {
   return createReviewSummaryEmbed(review);
 }
 
+function createDeepAnalysisEmbed(analysis) {
+  const tokenInfo = analysis.tokenInfo || {};
+  const netflow = analysis.netflowToken || {};
+  const holders = analysis.holders || {};
+  const dexTrades = analysis.dexTrades || {};
+  const gates = analysis.gates || {};
+  const symbol = tokenInfo.symbol || netflow.token_symbol || UNKNOWN_SYMBOL;
+  const marketCapUsd = tokenInfo.marketCapUsd || netflow.market_cap_usd;
+  const sellDominant = Number(dexTrades.sellValueUsd) > Number(dexTrades.buyValueUsd);
+
+  const embed = new EmbedBuilder()
+    .setColor(0xffd166)
+    .setTitle(`しえすたん Deep Radar | ${symbol}`.slice(0, 256))
+    .setDescription(
+      [
+        "追加データで深掘りした診断結果ですにゃ。投資助言ではないにゃ。",
+        `Chain: \`${analysis.chain || "solana"}\``,
+        `CA: \`${analysis.tokenAddress || NO_DATA}\``
+      ].join("\n")
+    )
+    .setTimestamp(new Date());
+
+  const imageUrl = getTokenImageUrl(tokenInfo);
+  if (imageUrl) {
+    embed.setThumbnail(imageUrl);
+  }
+
+  addInlineField(embed, "🧪 Deep判定", `${analysis.score ?? NO_DATA}/100｜${formatConfidence(analysis.confidence)}`);
+  embed.addFields({
+    name: "しえすたん判定",
+    value: truncate(formatDeepJudgement(analysis, netflow, dexTrades), 500),
+    inline: false
+  });
+  addInlineField(
+    embed,
+    "🌊 SM Flow",
+    `24h: ${formatSignedUsd(netflow.net_flow_24h_usd)} / 7d: ${formatSignedUsd(netflow.net_flow_7d_usd)} / 30d: ${formatSignedUsd(netflow.net_flow_30d_usd)}`
+  );
+  addInlineField(
+    embed,
+    "💸 Deep DEX売買",
+    `買い ${formatTradeUsd(dexTrades.buyValueUsd)} / 売り ${formatTradeUsd(dexTrades.sellValueUsd)}${sellDominant ? " / 売り優勢" : ""}`
+  );
+  embed.addFields({
+    name: "🧠 買い手の質",
+    value: truncate(formatBuyerQuality(analysis.buyerQuality, gates), 500),
+    inline: false
+  });
+  addInlineField(
+    embed,
+    "🚦 Deepチェック",
+    `資金流入: ${formatGate(gates.g1FlowSignal)} / 買い手の質: ${formatGate(gates.g2BuyerQuality)} / ホルダー状況: ${formatGate(gates.g3HolderConviction)} / リスク確認: ${formatGate(gates.g4RiskCheck)}`
+  );
+  addInlineField(embed, "💧 Liquidity", formatUsd(tokenInfo.liquidityUsd));
+  addInlineField(embed, "💰 MCAP", formatUsd(marketCapUsd));
+  addInlineField(embed, "👥 Holders", formatHolders(tokenInfo.holderCount, holders.smartMoneyHolderCount));
+  addInlineField(embed, "📈 Chart", `[Dexscreener](https://dexscreener.com/solana/${analysis.tokenAddress})`);
+
+  embed.addFields(
+    {
+      name: "注意点",
+      value: truncate(formatList(analysis.warnings?.slice(0, 2), NO_WARNINGS), 500),
+      inline: false
+    },
+    {
+      name: "良い点",
+      value: truncate(formatList(analysis.good?.slice(0, 2)), 500),
+      inline: false
+    }
+  );
+
+  return embed;
+}
+
 module.exports = {
   createDeepAnalysisDetailEmbed,
   createDeepAnalysisEmbed,
@@ -1411,8 +1757,13 @@ module.exports = {
   createDiscoveryEmbed,
   createDiscoveryEmbeds,
   createEarlySignalEmbed,
+  createEliteEmbeds,
   createRadarEmbed,
   createRadarEmbeds,
   createReviewEmbed: createReviewEmbedReadable,
-  createTokenCardComponents
+  createTokenCardComponents,
+  createTokenCheckComponents,
+  createTokenCheckEmbed,
+  createWatchlistComponents,
+  createWatchlistEmbeds
 };

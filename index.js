@@ -8,22 +8,46 @@ const {
   createDeepAnalysisEmbed,
   createDiscoveryEmbeds,
   createEarlySignalEmbed,
+  createEliteEmbeds,
   createRadarEmbeds,
   createReviewEmbed,
-  createTokenCardComponents
+  createTokenCardComponents,
+  createTokenCheckComponents,
+  createTokenCheckEmbed,
+  createWatchlistComponents,
+  createWatchlistEmbeds
 } = require("./src/formatters");
 const { getNansenVersion, getSolanaSmartMoneyNetflow } = require("./src/nansen");
+const { runSolanaEliteRadar } = require("./src/elite");
 const { runSolanaRadar } = require("./src/radar");
 const { reviewSolanaRadarSignals } = require("./src/review");
 const { scoreTokens } = require("./src/scoring");
-const { saveDiscoveryResult, saveRadarResult, saveScanResult } = require("./src/storage");
+const {
+  addWatchlistItem,
+  getUserWatchlist,
+  getWatchCount,
+  removeWatchlistItem,
+  saveDiscoveryResult,
+  saveRadarResult,
+  saveScanResult
+} = require("./src/storage");
+const { analyzeWatchToken, buildWatchlistView, extractSolanaTokenAddress } = require("./src/watchRadar");
 
 const token = process.env.DISCORD_BOT_TOKEN;
+let eliteRadarRunning = false;
 
 if (!token) {
   console.error("DISCORD_BOT_TOKEN is not set. Please create a .env file.");
   process.exit(1);
 }
+
+process.on("unhandledRejection", (error) => {
+  console.error("Unhandled promise rejection:", error);
+});
+
+process.on("uncaughtException", (error) => {
+  console.error("Uncaught exception:", error);
+});
 
 const client = new Client({
   intents: [
@@ -139,6 +163,31 @@ function parseWideOptions(parts) {
   return options;
 }
 
+function parseEliteOptions(parts) {
+  const options = {
+    topWallets: 10
+  };
+  const args = parts.slice(2);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+
+    if (arg === "--top-wallets") {
+      const value = Number(args[index + 1]);
+      if (!Number.isInteger(value) || value < 1 || value > 50) {
+        return null;
+      }
+      options.topWallets = value;
+      index += 1;
+      continue;
+    }
+
+    return null;
+  }
+
+  return options;
+}
+
 async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
   const [overview, ...cards] = embeds;
 
@@ -157,6 +206,25 @@ async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
   }
 }
 
+async function sendUserWatchlist(user, source) {
+  const items = await getUserWatchlist(user.id);
+  const viewItems = await buildWatchlistView(items);
+  const payload = {
+    components: createWatchlistComponents(viewItems),
+    embeds: createWatchlistEmbeds(viewItems, user)
+  };
+
+  if (source?.isButton?.()) {
+    await source.reply({
+      ...payload,
+      ephemeral: source.inGuild()
+    });
+    return;
+  }
+
+  await user.send(payload);
+}
+
 client.once(Events.ClientReady, (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
 });
@@ -166,33 +234,95 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  const [action, chain, tokenAddress] = interaction.customId.split(":");
+  try {
+    const [action, chain, tokenAddress] = interaction.customId.split(":");
+    const privateReply = interaction.inGuild();
 
-  if (action !== "deep" || chain !== "solana" || !isValidSolanaAddress(tokenAddress)) {
+    if (chain !== "solana" || !isValidSolanaAddress(tokenAddress)) {
+      await interaction.reply({
+        content: "このボタンの内容を確認できませんでしたにゃ。",
+        ephemeral: privateReply
+      });
+      return;
+    }
+
+    if (action === "deep") {
+      await interaction.deferReply();
+      const analysis = await analyzeSolanaTokenDeep(tokenAddress);
+      await interaction.editReply({
+        embeds: [createDeepAnalysisEmbed(analysis)]
+      });
+      return;
+    }
+
+    if (action === "watch") {
+      await interaction.deferReply({ ephemeral: privateReply });
+      const watchCount = await getWatchCount({ chain, tokenAddress });
+      const analysis = await analyzeWatchToken({ chain, tokenAddress, watchCount });
+      const tokenInfo = analysis.tokenInfo || {};
+      const saved = await addWatchlistItem({
+        userId: interaction.user.id,
+        chain,
+        tokenAddress,
+        symbol: tokenInfo.symbol || "",
+        name: tokenInfo.name || "",
+        addedAt: new Date().toISOString(),
+        addedPriceUsd: tokenInfo.priceUsd || 0,
+        addedMarketCapUsd: tokenInfo.marketCapUsd || 0,
+        addedLiquidityUsd: tokenInfo.liquidityUsd || 0,
+        sourceChannelId: interaction.channelId || "",
+        sourceMessageId: interaction.message?.id || ""
+      });
+
+      await interaction.editReply(
+        saved.alreadyWatched
+          ? `すでにWatch中ですにゃ。Watch中: ${saved.watchCount}人`
+          : `Watchlistに追加しましたにゃ。Watch中: ${saved.watchCount}人`
+      );
+      return;
+    }
+
+    if (action === "watchremove") {
+      await interaction.deferReply({ ephemeral: privateReply });
+      const removed = await removeWatchlistItem({
+        userId: interaction.user.id,
+        chain,
+        tokenAddress
+      });
+      await interaction.editReply(
+        removed.removed
+          ? `Watchlistから削除しましたにゃ。Watch中: ${removed.watchCount}人`
+          : "Watchlistに見つかりませんでしたにゃ。"
+      );
+      return;
+    }
+
     await interaction.reply({
       content: "このボタンの内容を確認できませんでしたにゃ。",
-      ephemeral: true
-    });
-    return;
-  }
-
-  await interaction.deferReply();
-
-  try {
-    const analysis = await analyzeSolanaTokenDeep(tokenAddress);
-    await interaction.editReply({
-      embeds: [createDeepAnalysisEmbed(analysis)]
+      ephemeral: privateReply
     });
   } catch (error) {
-    console.error("Failed to run deep Solana token analysis from button:", error);
-    await interaction.editReply("深掘り分析に失敗しましたにゃ。");
+    console.error("Failed to handle Discord button interaction:", error);
+    try {
+      if (interaction.deferred || interaction.replied) {
+        await interaction.editReply("処理に失敗しましたにゃ。");
+      } else {
+        await interaction.reply({
+          content: "処理に失敗しましたにゃ。",
+          ephemeral: interaction.inGuild()
+        });
+      }
+    } catch (replyError) {
+      console.error("Failed to send button interaction error reply:", replyError);
+    }
   }
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) {
-    return;
-  }
+  try {
+    if (message.author.bot) {
+      return;
+    }
 
   const parts = message.content.trim().split(/\s+/);
 
@@ -259,6 +389,51 @@ client.on(Events.MessageCreate, async (message) => {
     return;
   }
 
+  if (parts[0] === "!check" && parts[1] === "solana") {
+    if (!parts[2] || parts.length !== 3) {
+      await message.reply("使い方: `!check solana TOKEN_ADDRESS` または `!check solana DEXSCREENER_URL`");
+      return;
+    }
+
+    const tokenAddress = extractSolanaTokenAddress(parts[2]);
+    if (!tokenAddress) {
+      await message.reply("SolanaのトークンアドレスかDexscreener URLを確認してくださいにゃ。");
+      return;
+    }
+
+    const reply = await message.reply("分析中ですにゃ。Watch Radarでトークンを確認しています...");
+
+    try {
+      const watchCount = await getWatchCount({ chain: "solana", tokenAddress });
+      const analysis = await analyzeWatchToken({
+        chain: "solana",
+        tokenAddress,
+        watchCount
+      });
+
+      await reply.edit({
+        content: "",
+        components: createTokenCheckComponents({ chain: "solana", tokenAddress }),
+        embeds: [createTokenCheckEmbed(analysis)]
+      });
+    } catch (error) {
+      console.error("Failed to run Watch Radar token check:", error);
+      await reply.edit("Watch Radarの確認に失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (message.content === "!watchlist") {
+    try {
+      await sendUserWatchlist(message.author);
+      await message.reply("WatchlistをDMに送りましたにゃ。");
+    } catch (error) {
+      console.error("Failed to send user watchlist:", error);
+      await message.reply("WatchlistをDMで送れませんでしたにゃ。DM設定を確認してください。");
+    }
+    return;
+  }
+
   if (parts[0] === "!discover" && parts[1] === "solana") {
     const wideOptions = parseWideOptions(parts);
     if (!wideOptions) {
@@ -294,6 +469,38 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to run Solana discovery:", error);
       await reply.edit("SolanaのG0 Discoveryに失敗しましたにゃ。");
+    }
+    return;
+  }
+
+  if (parts[0] === "!elite" && parts[1] === "solana") {
+    const eliteOptions = parseEliteOptions(parts);
+    if (!eliteOptions) {
+      await message.reply("使い方: `!elite solana --top-wallets 50`（top-walletsは1から50です）");
+      return;
+    }
+
+    if (eliteRadarRunning) {
+      await message.reply("Elite SM Radarは別の分析が実行中ですにゃ。少し待ってから再実行してください。");
+      return;
+    }
+
+    eliteRadarRunning = true;
+    const reply = await message.reply("分析中ですにゃ。Elite SM Radarで90D成績の良いSmart Moneyを確認しています...");
+
+    try {
+      const elite = await runSolanaEliteRadar(eliteOptions);
+      await sendOverviewAndTokenCards(
+        message,
+        reply,
+        createEliteEmbeds(elite.results, elite.stats),
+        elite.results.slice(0, 5).map((result) => result.address)
+      );
+    } catch (error) {
+      console.error("Failed to run Solana elite radar:", error);
+      await reply.edit("Elite SM Radarに失敗しましたにゃ。");
+    } finally {
+      eliteRadarRunning = false;
     }
     return;
   }
@@ -425,6 +632,14 @@ client.on(Events.MessageCreate, async (message) => {
     } catch (error) {
       console.error("Failed to run deep Solana token analysis:", error);
       await reply.edit("深掘り分析に失敗しましたにゃ。");
+    }
+  }
+  } catch (error) {
+    console.error("Unhandled Discord message handler error:", error);
+    try {
+      await message.reply("処理に失敗しましたにゃ。少し時間をおいて再実行してください。");
+    } catch (replyError) {
+      console.error("Failed to send message handler error reply:", replyError);
     }
   }
 });

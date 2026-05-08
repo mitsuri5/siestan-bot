@@ -2,6 +2,9 @@ const { execFile } = require("child_process");
 const { promisify } = require("util");
 
 const execFileAsync = promisify(execFile);
+const DEFAULT_NANSEN_TIMEOUT_MS = 60 * 1000;
+const PROFILER_TIMEOUT_MS = 25 * 1000;
+const REST_TIMEOUT_MS = 30 * 1000;
 
 function getNansenCommand(args) {
   if (process.platform === "win32") {
@@ -21,18 +24,21 @@ function parseJsonOutput(output) {
   return JSON.parse(output);
 }
 
-async function runNansen(args) {
+async function runNansen(args, options = {}) {
   const { file, args: commandArgs } = getNansenCommand(args);
+  const timeout = Number(options.timeoutMs) || DEFAULT_NANSEN_TIMEOUT_MS;
   const { stdout } = await execFileAsync(file, commandArgs, {
     maxBuffer: 20 * 1024 * 1024,
+    timeout,
+    killSignal: "SIGTERM",
     windowsHide: true
   });
 
   return stdout.trim();
 }
 
-async function runNansenJson(args) {
-  const output = await runNansen(args);
+async function runNansenJson(args, options = {}) {
+  const output = await runNansen(args, options);
   const parsed = parseJsonOutput(output);
 
   if (parsed.success === false) {
@@ -113,23 +119,32 @@ async function fetchSolanaSmartMoneyDexTradesRestPage({ page, perPage }) {
     throw new Error("Global fetch is not available in this Node.js runtime.");
   }
 
-  const response = await fetch("https://api.nansen.ai/api/v1/smart-money/dex-trades", {
-    method: "POST",
-    headers: {
-      apikey: apiKey,
-      "Content-Type": "application/json",
-      "X-Client-Type": "siestan-bot"
-    },
-    body: JSON.stringify({
-      chains: ["solana"],
-      filters: {},
-      order_by: null,
-      pagination: {
-        page,
-        per_page: perPage
-      }
-    })
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REST_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch("https://api.nansen.ai/api/v1/smart-money/dex-trades", {
+      method: "POST",
+      headers: {
+        apikey: apiKey,
+        "Content-Type": "application/json",
+        "X-Client-Type": "siestan-bot"
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        chains: ["solana"],
+        filters: {},
+        order_by: null,
+        pagination: {
+          page,
+          per_page: perPage
+        }
+      })
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     let message = `Nansen REST API request failed with status ${response.status}.`;
@@ -269,6 +284,22 @@ async function getSolanaTokenOhlcv({ tokenAddress, timeframe = "1h" }) {
   return extractRows(parsed);
 }
 
+async function getWalletPnlSummary({ address, chain = "solana", days = 90 }) {
+  const parsed = await runNansenJson([
+    "research",
+    "profiler",
+    "pnl-summary",
+    "--address",
+    address,
+    "--chain",
+    chain,
+    "--days",
+    String(days)
+  ], { timeoutMs: PROFILER_TIMEOUT_MS });
+
+  return parsed.data?.data ?? parsed.data ?? {};
+}
+
 module.exports = {
   getNansenVersion,
   getSolanaTokenOhlcv,
@@ -279,5 +310,6 @@ module.exports = {
   getTokenFlowIntelligence,
   getTokenHolders,
   getTokenDexTrades,
-  getTokenInfo
+  getTokenInfo,
+  getWalletPnlSummary
 };

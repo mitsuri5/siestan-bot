@@ -3,3 +3,6 @@ node_modules/
 data/signals.json
 data/discoveries.json
 data/radar.json
+data/sm90d-cache.json
+data/watchlist.json
+bot.*.log
