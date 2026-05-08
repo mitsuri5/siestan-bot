@@ -1,6 +1,6 @@
 require("dotenv").config();
 
-const { Client, EmbedBuilder, Events, GatewayIntentBits } = require("discord.js");
+const { Client, EmbedBuilder, Events, GatewayIntentBits, SlashCommandBuilder } = require("discord.js");
 const { analyzeSolanaTokenDeep, isValidSolanaAddress } = require("./src/deepAnalysis");
 const { discoverSolanaCandidates } = require("./src/discovery");
 const {
@@ -35,6 +35,13 @@ const { analyzeWatchToken, buildWatchlistView, extractSolanaTokenAddress } = req
 
 const token = process.env.DISCORD_BOT_TOKEN;
 let eliteRadarRunning = false;
+
+const slashCommands = [
+  new SlashCommandBuilder()
+    .setName("watchlist")
+    .setDescription("Show your Watchlist privately.")
+    .toJSON()
+];
 
 if (!token) {
   console.error("DISCORD_BOT_TOKEN is not set. Please create a .env file.");
@@ -222,14 +229,71 @@ async function sendUserWatchlist(user, source) {
     return;
   }
 
+  if (source?.isChatInputCommand?.()) {
+    if (source.deferred || source.replied) {
+      await source.editReply(payload);
+    } else {
+      await source.reply({
+        ...payload,
+        ephemeral: true
+      });
+    }
+    return;
+  }
+
   await user.send(payload);
 }
 
-client.once(Events.ClientReady, (readyClient) => {
+async function registerSlashCommands(readyClient) {
+  const commands = await readyClient.application.commands.fetch();
+  const watchlistCommand = commands.find((command) => command.name === "watchlist");
+
+  if (watchlistCommand) {
+    await watchlistCommand.edit(slashCommands[0]);
+    return;
+  }
+
+  await readyClient.application.commands.create(slashCommands[0]);
+}
+
+client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+
+  try {
+    await registerSlashCommands(readyClient);
+    console.log("Registered /watchlist command.");
+  } catch (error) {
+    console.error("Failed to register slash commands:", error);
+  }
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (interaction.isChatInputCommand()) {
+    if (interaction.commandName !== "watchlist") {
+      return;
+    }
+
+    try {
+      await interaction.deferReply({ ephemeral: true });
+      await sendUserWatchlist(interaction.user, interaction);
+    } catch (error) {
+      console.error("Failed to handle /watchlist command:", error);
+      try {
+        if (interaction.deferred || interaction.replied) {
+          await interaction.editReply("Watchlistの表示に失敗しました。少し待ってからもう一度試してください。");
+        } else {
+          await interaction.reply({
+            content: "Watchlistの表示に失敗しました。少し待ってからもう一度試してください。",
+            ephemeral: true
+          });
+        }
+      } catch (replyError) {
+        console.error("Failed to send /watchlist error reply:", replyError);
+      }
+    }
+    return;
+  }
+
   if (!interaction.isButton()) {
     return;
   }
@@ -424,13 +488,7 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (message.content === "!watchlist") {
-    try {
-      await sendUserWatchlist(message.author);
-      await message.reply("WatchlistをDMに送りましたにゃ。");
-    } catch (error) {
-      console.error("Failed to send user watchlist:", error);
-      await message.reply("WatchlistをDMで送れませんでしたにゃ。DM設定を確認してください。");
-    }
+    await message.reply("Watchlistは `/watchlist` で自分だけに見える表示として確認してください。");
     return;
   }
 

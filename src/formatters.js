@@ -1130,7 +1130,7 @@ function createTokenCheckEmbed(analysis) {
   return embed;
 }
 
-function createWatchlistEmbeds(items, user) {
+function createWatchlistEmbedsLegacy(items, user) {
   const title = user?.username ? `${user.username} のWatchlist` : "Your Watchlist";
   const embed = new EmbedBuilder()
     .setColor(0xf7c948)
@@ -1181,6 +1181,62 @@ function createWatchlistEmbeds(items, user) {
     embed.addFields({
       name: "表示上限",
       value: `先頭10件のみ表示しています。合計 ${formatTradeCount(items.length)} 件です。`
+    });
+  }
+
+  return [embed];
+}
+
+function createWatchlistEmbeds(items, user) {
+  const title = user?.username ? `${user.username}'s Watchlist` : "Your Watchlist";
+  const embed = new EmbedBuilder()
+    .setColor(0xf7c948)
+    .setTitle(title)
+    .setDescription("Private Watchlist view. Prices are refreshed when this view is opened.")
+    .setTimestamp(new Date());
+
+  if (items.length === 0) {
+    embed.addFields({
+      name: "Watchlist is empty",
+      value: "Use `!check solana TOKEN_ADDRESS` and press `Watch` to add a token."
+    });
+    return [embed];
+  }
+
+  for (const item of items.slice(0, 10)) {
+    const symbol = item.currentSymbol || item.symbol || UNKNOWN_SYMBOL;
+    const name = item.currentName || item.name || "";
+    const addedAt = new Date(item.addedAt || 0).getTime();
+    const watchedSince = Number.isFinite(addedAt)
+      ? `${formatDateTime(item.addedAt)} (${formatElapsed(Date.now() - addedAt)} ago)`
+      : NO_DATA;
+    const fallbackChange = item.basis === "marketCap"
+      ? `MCAP change: ${formatChangeRate(item.changeRate)}`
+      : `Change: ${formatChangeRate(item.changeRate)}`;
+
+    embed.addFields({
+      name: `${symbol}${name && name !== symbol ? ` | ${name}` : ""}`.slice(0, 256),
+      value: truncate(
+        [
+          `Symbol: ${symbol}`,
+          `Added price: ${formatTokenPrice(item.addedPriceUsd)}`,
+          `Current price: ${formatTokenPrice(item.currentPriceUsd)}`,
+          `% change: ${formatChangeRate(item.changeRate)}`,
+          `Watched since: ${watchedSince}`,
+          `CA: \`${item.tokenAddress}\``,
+          fallbackChange,
+          `Chart: https://dexscreener.com/${item.chain || "solana"}/${item.tokenAddress}`
+        ].join("\n"),
+        1024
+      ),
+      inline: false
+    });
+  }
+
+  if (items.length > 10) {
+    embed.addFields({
+      name: "Display limit",
+      value: `Showing the first 10 of ${formatTradeCount(items.length)} watched tokens.`
     });
   }
 
