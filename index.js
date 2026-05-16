@@ -36,58 +36,158 @@ const { analyzeWatchToken, buildWatchlistView, extractSolanaTokenAddress } = req
 const token = process.env.DISCORD_BOT_TOKEN;
 let eliteRadarRunning = false;
 
+const solanaOption = (option) =>
+  option
+    .setName("chain")
+    .setDescription("分析するチェーンを選びます")
+    .setRequired(true)
+    .addChoices({ name: "solana", value: "solana" });
+
+const wideModeOption = (option) =>
+  option
+    .setName("mode")
+    .setDescription("通常スキャンか広範囲スキャンを選びます")
+    .setRequired(false)
+    .addChoices({ name: "normal", value: "normal" }, { name: "wide", value: "wide" });
+
+const radarModeOption = (option) =>
+  option
+    .setName("mode")
+    .setDescription("通常分析か広範囲分析を選びます")
+    .setRequired(false)
+    .addChoices({ name: "normal", value: "normal" }, { name: "wide", value: "wide" });
+
+const wideLimitOption = (option) =>
+  option
+    .setName("limit")
+    .setDescription("取得するSmart Money取引数を指定します")
+    .setRequired(false)
+    .setMinValue(1)
+    .setMaxValue(500);
+
+const targetTokensOption = (option) =>
+  option
+    .setName("target_tokens")
+    .setDescription("目標にする集計後トークン数を指定します")
+    .setRequired(false)
+    .setMinValue(1)
+    .setMaxValue(700);
+
 const slashCommands = [
+  new SlashCommandBuilder().setName("ping").setDescription("Botが動いているか確認します").toJSON(),
+  new SlashCommandBuilder().setName("help").setDescription("使えるコマンド一覧を表示します").toJSON(),
+  new SlashCommandBuilder().setName("about").setDescription("しえすたんBotの概要を表示します").toJSON(),
+  new SlashCommandBuilder().setName("sleep").setDescription("しえすたんのお昼寝メッセージを表示します").toJSON(),
+  new SlashCommandBuilder().setName("nansen-test").setDescription("Nansen CLI/APIの接続確認をします").toJSON(),
   new SlashCommandBuilder()
-    .setName("check")
-    .setDescription("Solana tokenをWatch Radarで確認します。")
-    .addStringOption((option) =>
-      option
-        .setName("chain")
-        .setDescription("対象チェーン")
-        .setRequired(true)
-        .addChoices({ name: "solana", value: "solana" })
-    )
+    .setName("scan")
+    .setDescription("Smart Moneyの資金流入をざっくり確認します")
+    .addStringOption(solanaOption)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("discover")
+    .setDescription("Smart Moneyが直近で触っているトークン候補を探します")
+    .addStringOption(solanaOption)
+    .addStringOption(wideModeOption)
+    .addIntegerOption(wideLimitOption)
+    .addIntegerOption(targetTokensOption)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("radar")
+    .setDescription("候補トークンをまとめて分析し、注目度をランキング表示します")
+    .addStringOption(solanaOption)
+    .addStringOption(radarModeOption)
+    .addIntegerOption(wideLimitOption)
+    .addIntegerOption(targetTokensOption)
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("deep")
+    .setDescription("指定したトークンをNansenデータで深掘り分析します")
+    .addStringOption(solanaOption)
     .addStringOption((option) =>
       option
         .setName("token")
-        .setDescription("Solana token address または Dexscreener URL")
+        .setDescription("深掘りしたいToken Addressを入力します")
         .setRequired(true)
     )
     .toJSON(),
   new SlashCommandBuilder()
-    .setName("deep")
-    .setDescription("Solana tokenを深掘り分析します。")
+    .setName("review")
+    .setDescription("過去に検出したトークンの上昇率ランキングを確認します")
+    .addStringOption(solanaOption)
     .addStringOption((option) =>
       option
-        .setName("chain")
-        .setDescription("対象チェーン")
-        .setRequired(true)
-        .addChoices({ name: "solana", value: "solana" })
+        .setName("period")
+        .setDescription("確認する過去シグナルの期間を選びます")
+        .setRequired(false)
+        .addChoices(
+          { name: "recent", value: "recent" },
+          { name: "all", value: "all" },
+          { name: "24h", value: "24h" },
+          { name: "7d", value: "7d" }
+        )
     )
     .addStringOption((option) =>
       option
-        .setName("token")
-        .setDescription("Solana token address")
-        .setRequired(true)
+        .setName("mature")
+        .setDescription("検出から一定時間たったものだけに絞ります")
+        .setRequired(false)
+        .addChoices(
+          { name: "none", value: "none" },
+          { name: "1h", value: "1h" },
+          { name: "4h", value: "4h" },
+          { name: "24h", value: "24h" },
+          { name: "7d", value: "7d" }
+        )
+    )
+    .addIntegerOption((option) =>
+      option
+        .setName("top")
+        .setDescription("表示するランキング件数を指定します")
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(20)
     )
     .addBooleanOption((option) =>
       option
         .setName("detail")
-        .setDescription("詳細版の分析カードを表示します。")
+        .setDescription("詳しい集計や対象外理由も表示します")
+        .setRequired(false)
+    )
+    .addBooleanOption((option) =>
+      option
+        .setName("stats")
+        .setDescription("ランキングではなく全体成績だけ表示します")
         .setRequired(false)
     )
     .toJSON(),
   new SlashCommandBuilder()
+    .setName("elite")
+    .setDescription("直近90日で成績の良いSmart Moneyが買うトークンを探します")
+    .addStringOption(solanaOption)
+    .addIntegerOption((option) =>
+      option
+        .setName("top_wallets")
+        .setDescription("評価するElite Smart Moneyの人数を指定します")
+        .setRequired(false)
+        .setMinValue(1)
+        .setMaxValue(50)
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
+    .setName("check")
+    .setDescription("気になるSolanaトークンをNansenでチェックします")
+    .addStringOption(solanaOption)
+    .addStringOption((option) =>
+      option
+        .setName("token_or_url")
+        .setDescription("Token AddressまたはDexscreener URLを入力します")
+        .setRequired(true)
+    )
+    .toJSON(),
+  new SlashCommandBuilder()
     .setName("watchlist")
-    .setDescription("Watchlistを自分だけに表示します。")
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("ping")
-    .setDescription("Botの生存確認をします。")
-    .toJSON(),
-  new SlashCommandBuilder()
-    .setName("help")
-    .setDescription("しえすたんBotのコマンド一覧を表示します。")
+    .setDescription("自分だけのWatchlistを表示します")
     .toJSON()
 ];
 
@@ -243,7 +343,63 @@ function parseEliteOptions(parts) {
   return options;
 }
 
+function createAboutEmbed() {
+  return new EmbedBuilder()
+    .setColor(0xffc1da)
+    .setTitle("しえすたんについて")
+    .setDescription(
+      "しえすたんは、Nansenのオンチェーンデータを使って、アラートやSmart Moneyの動きを見守るBotですにゃ。"
+    );
+}
+
+function createWideOptionsFromInteraction(interaction) {
+  const mode = interaction.options.getString("mode") || "normal";
+
+  if (mode !== "wide") {
+    return {
+      limit: 200,
+      targetTokens: null,
+      wide: false
+    };
+  }
+
+  return {
+    limit: interaction.options.getInteger("limit") || 200,
+    targetTokens: interaction.options.getInteger("target_tokens") || null,
+    wide: true
+  };
+}
+
+function createReviewOptionsFromInteraction(interaction) {
+  const period = interaction.options.getString("period") || "recent";
+  const mature = interaction.options.getString("mature") || "none";
+
+  return {
+    option: period === "recent" ? "default" : period,
+    mature: mature === "none" ? null : mature,
+    detail: interaction.options.getBoolean("detail") || false,
+    stats: interaction.options.getBoolean("stats") || false,
+    top: interaction.options.getInteger("top") || 5
+  };
+}
+
+function createEliteOptionsFromInteraction(interaction) {
+  return {
+    topWallets: interaction.options.getInteger("top_wallets") || 10
+  };
+}
+
+function createInteractionReplyEditor(interaction) {
+  return {
+    edit: (payload) => interaction.editReply(payload)
+  };
+}
+
 async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
+  await sendOverviewAndTokenCardsToChannel(message.channel, reply, embeds, addresses);
+}
+
+async function sendOverviewAndTokenCardsToChannel(channel, reply, embeds, addresses) {
   const [overview, ...cards] = embeds;
 
   await reply.edit({
@@ -252,28 +408,224 @@ async function sendOverviewAndTokenCards(message, reply, embeds, addresses) {
     embeds: overview ? [overview] : []
   });
 
+  if (!channel) {
+    return;
+  }
+
   for (let index = 0; index < cards.length; index += 1) {
     const address = addresses[index];
-    await message.channel.send({
+    await channel.send({
       components: createTokenCardComponents(address),
       embeds: [cards[index]]
     });
   }
 }
 
+async function createNansenTestPayload() {
+  const version = await getNansenVersion();
+  const nansenEmbed = new EmbedBuilder()
+    .setColor(0x7bd88f)
+    .setTitle("Nansen CLI 接続確認")
+    .setDescription("しえすたんはNansen CLIに接続できていますにゃ。")
+    .addFields({ name: "Version", value: version || "unknown" });
+
+  return { embeds: [nansenEmbed] };
+}
+
+async function runDiscoverCommand({ channel, reply, wideOptions }) {
+  const useWide = wideOptions.wide;
+  const source = useWide ? "rest" : "cli";
+  const discoveries = await discoverSolanaCandidates({
+    dexTradeLimit: wideOptions.limit,
+    source,
+    targetTokens: wideOptions.targetTokens
+  });
+
+  await saveDiscoveryResult({
+    chain: "solana",
+    discoveries
+  });
+
+  await sendOverviewAndTokenCardsToChannel(
+    channel,
+    reply,
+    createDiscoveryEmbeds(discoveries),
+    discoveries.slice(0, 5).map((discovery) => discovery.address)
+  );
+}
+
+async function runRadarCommand({ channel, reply, wideOptions }) {
+  const useWide = wideOptions.wide;
+  const source = useWide ? "rest" : "cli";
+  const radar = await runSolanaRadar({
+    dexTradeLimit: wideOptions.limit,
+    source,
+    targetTokens: wideOptions.targetTokens
+  });
+
+  await saveRadarResult({
+    chain: "solana",
+    results: radar.results,
+    stats: radar.stats
+  });
+
+  await sendOverviewAndTokenCardsToChannel(
+    channel,
+    reply,
+    createRadarEmbeds(radar.results, radar.stats),
+    radar.results.slice(0, 5).map((result) => result.address)
+  );
+}
+
+async function runEliteCommand({ channel, reply, eliteOptions }) {
+  if (eliteRadarRunning) {
+    await reply.edit("Elite SM Radarは別の分析が実行中ですにゃ。少し待ってから再実行してください。");
+    return;
+  }
+
+  eliteRadarRunning = true;
+  try {
+    const elite = await runSolanaEliteRadar(eliteOptions);
+    await sendOverviewAndTokenCardsToChannel(
+      channel,
+      reply,
+      createEliteEmbeds(elite.results, elite.stats),
+      elite.results.slice(0, 5).map((result) => result.address)
+    );
+  } finally {
+    eliteRadarRunning = false;
+  }
+}
+
+async function runReviewCommand({ channel, reply, reviewOptions }) {
+  const review = await reviewSolanaRadarSignals(reviewOptions);
+  const embed = createReviewEmbed(review, { detail: reviewOptions.detail, stats: reviewOptions.stats });
+  const embeds = Array.isArray(embed) ? embed : [embed];
+
+  if (reviewOptions.detail || reviewOptions.stats || embeds.length <= 1) {
+    await reply.edit({
+      components: [],
+      content: "",
+      embeds
+    });
+    return;
+  }
+
+  await sendOverviewAndTokenCardsToChannel(
+    channel,
+    reply,
+    embeds,
+    (review.topPriceGainers || []).slice(0, reviewOptions.top).map((item) => item.address)
+  );
+}
+
+async function runScanCommand(reply) {
+  const tokens = await getSolanaSmartMoneyNetflow();
+  const signals = scoreTokens(tokens);
+
+  await saveScanResult({
+    chain: "solana",
+    signals
+  });
+
+  await reply.edit({
+    content: "",
+    embeds: [createEarlySignalEmbed(signals)]
+  });
+}
+
 function createHelpEmbed() {
   return new EmbedBuilder()
     .setColor(0x8fd3ff)
-    .setTitle("しえすたん コマンド一覧")
-    .setDescription("Discordの `/` から選べるコマンドと、互換用の `!` コマンドが使えますにゃ。")
+    .setTitle("しえすたん 使い方ガイド")
+    .setDescription(
+      [
+        "気になるトークンをNansenでチェックして、Watchlistであとから追えるBotですにゃ。",
+        "",
+        "**まず使うならこの3つですにゃ**",
+        "",
+        "**/check**",
+        "気になるトークンを調べる",
+        "",
+        "**⭐ /watchlist**",
+        "自分がWatchしたトークンを見る",
+        "",
+        "**/review**",
+        "過去に見つけたトークンの成績を見る"
+      ].join("\n")
+    )
     .addFields(
-      { name: "/check chain token", value: "Token Checkカードを表示します。`chain` は `solana`、`token` はSolana token addressまたはDexscreener URLです。" },
-      { name: "/deep chain token", value: "トークンを深掘り分析します。`detail` を指定すると詳細版を表示できます。" },
-      { name: "/watchlist", value: "Watchlistを自分だけに表示します。価格は開いたタイミングで更新されます。" },
-      { name: "/ping", value: "Bot が起動中か確認します。" },
-      { name: "/help", value: "このヘルプを表示します。" },
-      { name: "! コマンド", value: "`!check solana TOKEN_ADDRESS`、`!deep solana TOKEN_ADDRESS`、`!discover solana`、`!radar solana`、`!review solana`、`!elite solana`、`!scan solana`、`!nansen-test`、`!about`、`!sleep` も引き続き使えます。" }
-    );
+      {
+        name: "🔎 トークンを調べる",
+        value: [
+          "**/check**",
+          "SolanaのToken AddressかDexscreener URLを入れると、MCAP、流動性、Smart Money、リスクをまとめて確認できます。",
+          "",
+          "例:",
+          "`/check chain: solana token_or_url: TOKEN_ADDRESS`"
+        ].join("\n")
+      },
+      {
+        name: "⭐ Watchlist",
+        value: [
+          "`/check` の結果にある ⭐ Watch ボタンを押すと、自分だけのWatchlistに追加できます。",
+          "",
+          "**/watchlist**",
+          "Watch開始からの価格変化を確認できます。"
+        ].join("\n")
+      },
+      {
+        name: "📊 もっと詳しく分析する",
+        value: [
+          "**/deep**",
+          "1つのトークンを深掘り分析します。",
+          "",
+          "**/radar**",
+          "Smart Moneyが触っている候補をまとめて分析します。",
+          "",
+          "**/elite**",
+          "直近90日で成績の良いSmart Moneyが買う候補を探します。"
+        ].join("\n")
+      },
+      {
+        name: "🧾 振り返る",
+        value: [
+          "**/review**",
+          "過去に検出したトークンが、その後どれくらい上がったか確認します。",
+          "",
+          "`/review period: all top: 20`",
+          "全履歴から上位20件を見る",
+          "",
+          "`/review stats: true`",
+          "全体成績だけを見る"
+        ].join("\n")
+      },
+      {
+        name: "⚙️ 上級者向け",
+        value: [
+          "**/discover**",
+          "Smart Moneyが直近で触っている候補を探します。",
+          "",
+          "**/scan**",
+          "Smart Moneyのnetflowを確認します。",
+          "",
+          "**/nansen-test**",
+          "Nansen CLI/APIの接続確認をします。"
+        ].join("\n")
+      },
+      {
+        name: "補足: 旧コマンド",
+        value: [
+          "`/` の代わりに `!` でも使えます。",
+          "",
+          "例:",
+          "`!check solana TOKEN_ADDRESS`",
+          "`!watchlist`",
+          "`!radar solana --wide`"
+        ].join("\n")
+      }
+    )
+    .setFooter({ text: "投資助言ではありません。" });
 }
 
 async function createTokenCheckPayload({ chain = "solana", tokenAddress }) {
@@ -332,14 +684,33 @@ async function sendUserWatchlist(user, source) {
 
 async function registerSlashCommands(readyClient) {
   const commands = await readyClient.application.commands.fetch();
+  const failures = [];
 
   for (const commandData of slashCommands) {
-    const existingCommand = commands.find((command) => command.name === commandData.name);
-    if (existingCommand) {
-      await existingCommand.edit(commandData);
-    } else {
-      await readyClient.application.commands.create(commandData);
+    try {
+      const existingCommand = commands.find((command) => command.name === commandData.name);
+      if (existingCommand) {
+        await existingCommand.edit(commandData);
+        console.log(`Updated slash command: /${commandData.name}`);
+      } else {
+        await readyClient.application.commands.create(commandData);
+        console.log(`Created slash command: /${commandData.name}`);
+      }
+    } catch (error) {
+      failures.push(commandData.name);
+      console.error(`Failed to register slash command /${commandData.name}:`, {
+        code: error.code,
+        status: error.status,
+        message: error.message,
+        method: error.method,
+        url: error.url,
+        requestBody: error.requestBody
+      });
     }
+  }
+
+  if (failures.length > 0) {
+    throw new Error(`Failed to register ${failures.length} slash command(s): ${failures.map((name) => `/${name}`).join(", ")}`);
   }
 }
 
@@ -373,9 +744,110 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
+      if (interaction.commandName === "about") {
+        await interaction.reply({ embeds: [createAboutEmbed()] });
+        return;
+      }
+
+      if (interaction.commandName === "sleep") {
+        await interaction.reply("むにゃ... 監視はしえすたんに任せて、お昼寝してていいですにゃ。");
+        return;
+      }
+
+      if (interaction.commandName === "nansen-test") {
+        await interaction.deferReply();
+        await interaction.editReply(await createNansenTestPayload());
+        return;
+      }
+
+      if (interaction.commandName === "scan") {
+        const chain = interaction.options.getString("chain", true);
+        if (chain !== "solana") {
+          await interaction.reply({ content: "今は `solana` のみ対応していますにゃ。", ephemeral: true });
+          return;
+        }
+
+        await interaction.deferReply();
+        const reply = createInteractionReplyEditor(interaction);
+        await reply.edit("SolanaのSmart Money流入候補をスキャン中ですにゃ...");
+        await runScanCommand(reply);
+        return;
+      }
+
+      if (interaction.commandName === "discover") {
+        const chain = interaction.options.getString("chain", true);
+        if (chain !== "solana") {
+          await interaction.reply({ content: "今は `solana` のみ対応していますにゃ。", ephemeral: true });
+          return;
+        }
+
+        const wideOptions = createWideOptionsFromInteraction(interaction);
+        await interaction.deferReply();
+        const reply = createInteractionReplyEditor(interaction);
+        await reply.edit(
+          wideOptions.wide
+            ? "SolanaのG0 Discovery wideをREST APIで実行中ですにゃ..."
+            : "SolanaのG0 Discoveryを実行中ですにゃ..."
+        );
+        await runDiscoverCommand({ channel: interaction.channel, reply, wideOptions });
+        return;
+      }
+
+      if (interaction.commandName === "radar") {
+        const chain = interaction.options.getString("chain", true);
+        if (chain !== "solana") {
+          await interaction.reply({ content: "今は `solana` のみ対応していますにゃ。", ephemeral: true });
+          return;
+        }
+
+        const wideOptions = createWideOptionsFromInteraction(interaction);
+        await interaction.deferReply();
+        const reply = createInteractionReplyEditor(interaction);
+        await reply.edit(
+          wideOptions.wide
+            ? "SolanaのAlpha Radar wideをREST APIで実行中ですにゃ..."
+            : "SolanaのAlpha Radarを実行中ですにゃ..."
+        );
+        await runRadarCommand({ channel: interaction.channel, reply, wideOptions });
+        return;
+      }
+
+      if (interaction.commandName === "review") {
+        const chain = interaction.options.getString("chain", true);
+        if (chain !== "solana") {
+          await interaction.reply({ content: "今は `solana` のみ対応していますにゃ。", ephemeral: true });
+          return;
+        }
+
+        const reviewOptions = createReviewOptionsFromInteraction(interaction);
+        await interaction.deferReply();
+        const reply = createInteractionReplyEditor(interaction);
+        await reply.edit("過去のAlpha Radarシグナルを答え合わせ中ですにゃ...");
+        await runReviewCommand({ channel: interaction.channel, reply, reviewOptions });
+        return;
+      }
+
+      if (interaction.commandName === "elite") {
+        const chain = interaction.options.getString("chain", true);
+        if (chain !== "solana") {
+          await interaction.reply({ content: "今は `solana` のみ対応していますにゃ。", ephemeral: true });
+          return;
+        }
+
+        await interaction.deferReply();
+        const reply = createInteractionReplyEditor(interaction);
+        await reply.edit("分析中ですにゃ");
+        await runEliteCommand({
+          channel: interaction.channel,
+          reply,
+          eliteOptions: createEliteOptionsFromInteraction(interaction)
+        });
+        return;
+      }
+
       if (interaction.commandName === "check") {
         const chain = interaction.options.getString("chain", true);
-        const tokenInput = interaction.options.getString("token", true);
+        const tokenInput = interaction.options.getString("token_or_url", true);
 
         if (chain !== "solana") {
           await interaction.reply({
@@ -402,7 +874,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (interaction.commandName === "deep") {
         const chain = interaction.options.getString("chain", true);
         const tokenAddress = interaction.options.getString("token", true);
-        const detail = interaction.options.getBoolean("detail") || false;
 
         if (chain !== "solana") {
           await interaction.reply({
@@ -421,7 +892,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         }
 
         await interaction.deferReply();
-        await interaction.editReply(await createDeepAnalysisPayload({ tokenAddress, detail }));
+        await interaction.editReply(await createDeepAnalysisPayload({ tokenAddress, detail: false }));
         return;
       }
     } catch (error) {
@@ -549,14 +1020,7 @@ client.on(Events.MessageCreate, async (message) => {
   }
 
   if (message.content === "!about") {
-    const aboutEmbed = new EmbedBuilder()
-      .setColor(0xffc1da)
-      .setTitle("しえすたんについて")
-      .setDescription(
-        "しえすたんは、Nansenのオンチェーンデータを使って、アルトやSmart Moneyの動きを見守るBotですにゃ。"
-      );
-
-    await message.reply({ embeds: [aboutEmbed] });
+    await message.reply({ embeds: [createAboutEmbed()] });
     return;
   }
 
@@ -569,14 +1033,7 @@ client.on(Events.MessageCreate, async (message) => {
 
   if (message.content === "!nansen-test") {
     try {
-      const version = await getNansenVersion();
-      const nansenEmbed = new EmbedBuilder()
-        .setColor(0x7bd88f)
-        .setTitle("Nansen CLI 接続確認")
-        .setDescription("しえすたん、Nansen CLIに接続できていますにゃ。")
-        .addFields({ name: "Version", value: version || "unknown" });
-
-      await message.reply({ embeds: [nansenEmbed] });
+      await message.reply(await createNansenTestPayload());
     } catch (error) {
       console.error("Failed to check Nansen CLI connection:", error);
       await message.reply("Nansen CLIの接続確認に失敗しましたにゃ。");
@@ -618,32 +1075,14 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply("使い方: `!discover solana --wide --limit 500` または `!discover solana --wide --target-tokens 700`");
       return;
     }
-    const useWide = wideOptions.wide;
-    const source = useWide ? "rest" : "cli";
     const reply = await message.reply(
-      useWide
+      wideOptions.wide
         ? "SolanaのG0 Discovery wideをREST APIで実行中ですにゃ..."
         : "SolanaのG0 Discoveryを実行中ですにゃ..."
     );
 
     try {
-      const discoveries = await discoverSolanaCandidates({
-        dexTradeLimit: wideOptions.limit,
-        source,
-        targetTokens: wideOptions.targetTokens
-      });
-
-      await saveDiscoveryResult({
-        chain: "solana",
-        discoveries
-      });
-
-      await sendOverviewAndTokenCards(
-        message,
-        reply,
-        createDiscoveryEmbeds(discoveries),
-        discoveries.slice(0, 5).map((discovery) => discovery.address)
-      );
+      await runDiscoverCommand({ channel: message.channel, reply, wideOptions });
     } catch (error) {
       console.error("Failed to run Solana discovery:", error);
       await reply.edit("SolanaのG0 Discoveryに失敗しましたにゃ。");
@@ -658,27 +1097,13 @@ client.on(Events.MessageCreate, async (message) => {
       return;
     }
 
-    if (eliteRadarRunning) {
-      await message.reply("Elite SM Radarは別の分析が実行中ですにゃ。少し待ってから再実行してください。");
-      return;
-    }
-
-    eliteRadarRunning = true;
     const reply = await message.reply("分析中ですにゃ。Elite SM Radarで90D成績の良いSmart Moneyを確認しています...");
 
     try {
-      const elite = await runSolanaEliteRadar(eliteOptions);
-      await sendOverviewAndTokenCards(
-        message,
-        reply,
-        createEliteEmbeds(elite.results, elite.stats),
-        elite.results.slice(0, 5).map((result) => result.address)
-      );
+      await runEliteCommand({ channel: message.channel, reply, eliteOptions });
     } catch (error) {
       console.error("Failed to run Solana elite radar:", error);
       await reply.edit("Elite SM Radarに失敗しましたにゃ。");
-    } finally {
-      eliteRadarRunning = false;
     }
     return;
   }
@@ -689,33 +1114,14 @@ client.on(Events.MessageCreate, async (message) => {
       await message.reply("使い方: `!radar solana --wide --limit 500` または `!radar solana --wide --target-tokens 700`");
       return;
     }
-    const useWide = wideOptions.wide;
-    const source = useWide ? "rest" : "cli";
     const reply = await message.reply(
-      useWide
+      wideOptions.wide
         ? "SolanaのAlpha Radar wideをREST APIで実行中ですにゃ..."
         : "SolanaのAlpha Radarを実行中ですにゃ..."
     );
 
     try {
-      const radar = await runSolanaRadar({
-        dexTradeLimit: wideOptions.limit,
-        source,
-        targetTokens: wideOptions.targetTokens
-      });
-
-      await saveRadarResult({
-        chain: "solana",
-        results: radar.results,
-        stats: radar.stats
-      });
-
-      await sendOverviewAndTokenCards(
-        message,
-        reply,
-        createRadarEmbeds(radar.results, radar.stats),
-        radar.results.slice(0, 5).map((result) => result.address)
-      );
+      await runRadarCommand({ channel: message.channel, reply, wideOptions });
     } catch (error) {
       console.error("Failed to run Solana radar:", error);
       await reply.edit("SolanaのAlpha Radarに失敗しましたにゃ。");
@@ -733,29 +1139,7 @@ client.on(Events.MessageCreate, async (message) => {
     const reply = await message.reply("過去のAlpha Radarシグナルを答え合わせ中ですにゃ...");
 
     try {
-      const review = await reviewSolanaRadarSignals(reviewOptions);
-      const embed = createReviewEmbed(review, { detail: reviewOptions.detail, stats: reviewOptions.stats });
-      const embeds = Array.isArray(embed) ? embed : [embed];
-
-      try {
-        if (reviewOptions.detail || reviewOptions.stats || embeds.length <= 1) {
-          await reply.edit({
-            components: [],
-            content: "",
-            embeds
-          });
-        } else {
-          await sendOverviewAndTokenCards(
-            message,
-            reply,
-            embeds,
-            (review.topPriceGainers || []).slice(0, reviewOptions.top).map((item) => item.address)
-          );
-        }
-      } catch (replyError) {
-        console.error("Failed to send Solana review embed:", replyError);
-        await reply.edit("Signal Reviewの表示が長すぎましたにゃ。`--detail`なし、または条件を絞ってもう一度試してくださいにゃ。");
-      }
+      await runReviewCommand({ channel: message.channel, reply, reviewOptions });
     } catch (error) {
       console.error("Failed to review Solana radar signals:", error);
       await reply.edit("Signal Reviewに失敗しましたにゃ。");
@@ -767,18 +1151,7 @@ client.on(Events.MessageCreate, async (message) => {
     const reply = await message.reply("SolanaのSmart Money流入候補をスキャン中ですにゃ...");
 
     try {
-      const tokens = await getSolanaSmartMoneyNetflow();
-      const signals = scoreTokens(tokens);
-
-      await saveScanResult({
-        chain: "solana",
-        signals
-      });
-
-      await reply.edit({
-        content: "",
-        embeds: [createEarlySignalEmbed(signals)]
-      });
+      await runScanCommand(reply);
     } catch (error) {
       console.error("Failed to scan Solana Smart Money netflow:", error);
       await reply.edit("SolanaのSmart Moneyスキャンに失敗しましたにゃ。");
