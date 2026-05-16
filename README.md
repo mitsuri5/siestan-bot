@@ -1,115 +1,284 @@
-# siestan-bot
+# しえすたん Bot
 
-Node.js と discord.js を使った Discord Bot です。
+## 概要
 
-Discord で `!ping` と送ると、Bot が次のように返します。
+しえすたんは、Discord上でSolanaトークンをNansen API / CLIを使って分析できるコミュニティ向けオンチェーン分析Botです。
 
-```text
-しえすたん起動中ですにゃ。Pong!
+もともとはSmart Moneyが触っているトークンを自動で探すRadarとして作られましたが、現在は以下の2つを主な目的にしています。
+
+- Smart MoneyやNansenデータを使ってトークン候補を分析する
+- コミュニティメンバーが見つけたトークンをWatchlistで追跡する
+
+投資助言ではなく、リサーチ補助ツールです。
+
+## 主な機能
+
+### Watch Radar
+
+- 気になるToken AddressまたはDexscreener URLを `/check` で分析
+- Nansenデータを使ってMCAP、Liquidity、Holders、Smart Money Flowなどを確認
+- `⭐ Watch` ボタンで自分だけのWatchlistに追加
+- `/watchlist` でWatch開始後の価格変化を確認
+- 同じトークンを何人がWatchしているか表示
+
+### Token Check
+
+- `/check` でトークンをチェック
+- リスク、観察スコア、Smart Money情報をカード表示
+- Deep分析やDexscreenerへのボタン付き
+
+### Alpha Radar
+
+- `/discover` でSmart Moneyが直近で触っている候補を探索
+- `/radar` で候補をまとめて分析
+- `wide`、`limit`、`target_tokens` 相当のスラッシュオプションに対応
+
+### Deep Radar
+
+- `/deep` で1つのトークンを深掘り分析
+- Smart Money Flow、DEX売買、Holder状況、買い手の質などを表示
+
+### Signal Review
+
+- `/review` で過去に検出したトークンの上昇率ランキングを確認
+- `/review stats: true` で全体成績だけ表示
+- `/review detail: true` で詳細な集計を表示
+
+### Elite SM Radar
+
+- `/elite` で直近90日成績が良いSmart Moneyウォレットを選別
+- そのElite SMが多く買っているトークンを集計
+
+## まず使うコマンド
+
+### トークンを調べる
+
+```txt
+/check chain: solana token_or_url: TOKEN_ADDRESS
 ```
 
-## 必要なもの
+または
 
-- Node.js
-- Discord Bot の Token
-- Nansen CLI
-- Nansen API Key
+```txt
+/check chain: solana token_or_url: DEXSCREENER_URL
+```
+
+### 自分のWatchlistを見る
+
+```txt
+/watchlist
+```
+
+### 1つのトークンを深掘りする
+
+```txt
+/deep chain: solana token: TOKEN_ADDRESS
+```
+
+### 過去シグナルの成績を見る
+
+```txt
+/review chain: solana period: all top: 20
+```
+
+## Slash Commands
+
+以下のスラッシュコマンドに対応しています。
+
+- `/ping`
+- `/help`
+- `/about`
+- `/sleep`
+- `/nansen-test`
+- `/scan`
+- `/discover`
+- `/radar`
+- `/deep`
+- `/review`
+- `/elite`
+- `/check`
+- `/watchlist`
+
+旧形式の `!` コマンドも一部互換で残しています。
+
+例:
+
+```txt
+!check solana TOKEN_ADDRESS
+!radar solana --wide --limit 500
+!review solana --all --top 20
+```
+
+## Watch Radarの使い方
+
+1. Discordで `/check` を実行
+2. Token Address または Dexscreener URL を入力
+3. しえすたんがNansenデータでToken Checkカードを表示
+4. `⭐ Watch` ボタンを押す
+5. `/watchlist` で自分だけのWatchlistを確認
+
+Watchlistには以下のような情報が保存されます。
+
+- `userId`
+- `chain`
+- `tokenAddress`
+- `symbol`
+- `name`
+- `addedAt`
+- `addedPriceUsd`
+- `addedMarketCapUsd`
+- `addedLiquidityUsd`
+
+`data/watchlist.json` に保存されますが、このファイルは `.gitignore` に入れてコミットしません。
+
+## Nansenを使った分析
+
+しえすたんは主に以下のNansenデータを使います。
+
+- Smart Money DEX Trades
+- Smart Money Netflow
+- Flow Intelligence
+- Token Info
+- Holders
+- Profiler 90D PnL Summary
+
+目的は、単に価格だけを見るのではなく、以下を確認することです。
+
+- Smart Moneyが買っているか
+- 資金流入があるか
+- 買い手の質が高いか
+- ホルダー状況に問題がないか
+- 流動性や売り圧に注意点がないか
+
+Nansen CLIは通常のスキャンや深掘り分析で使います。Nansen REST APIはwide modeのSmart Money DEX Trades取得などで使います。
+
+## Smart Money 90D Buyer Quality
+
+買っているSmart Moneyウォレット自体が直近90日で強いかを確認します。
+
+主に以下を見ます。
+
+- realized PnL
+- realized PnL percent
+- win rate
+- traded token count
+- traded times
+- wallet labels
+
+結果はDeep分析やElite SM Radarに反映されます。
+
+## データ保存
+
+以下のようなローカルデータを使います。
+
+```txt
+data/watchlist.json
+data/sm90d-cache.json
+data/radar.json
+data/discoveries.json
+data/signals.json
+```
+
+注意:
+
+- `data/watchlist.json` はユーザーのWatchlist保存用
+- `data/sm90d-cache.json` は90D Profiler結果のキャッシュ用
+- `data/radar.json` はAlpha Radarの保存結果
+- `data/discoveries.json` はDiscoveryの保存結果
+- `data/signals.json` はSmart Money netflowスキャンの保存結果
+- これらのローカルデータはコミットしない
+- API Keyや秘密情報は保存しない
 
 ## セットアップ
 
-依存パッケージをインストールします。
+### 1. 依存関係をインストール
 
-```bash
+```powershell
+git clone REPOSITORY_URL
+cd siestan-bot
 npm install
 ```
 
-`.env.example` を参考にして、`.env` ファイルを作ります。
+### 2. Discord Botを準備
 
-```env
-DISCORD_BOT_TOKEN=your_discord_bot_token_here
-NANSEN_API_KEY=your_nansen_api_key_here
-```
+Discord Developer PortalでBotを作成し、以下を有効にします。
 
-本物の Discord Bot Token や Nansen API Key は、コードや README に書かないでください。
-Bot は `.env` から `DISCORD_BOT_TOKEN` と `NANSEN_API_KEY` を読み込みます。API Key の値はログに出さない方針です。
+- Message Content Intent
 
-Nansen CLI を使う場合は、別途 Nansen CLI をインストールしてログインしてください。
+Botをサーバーへ招待するときは、最低限以下の権限が必要です。
 
-```bash
+- View Channels
+- Send Messages
+- Read Message History
+- Use Slash Commands
+
+### 3. 環境変数を設定
+
+`.env.example` を参考に `.env` を作成し、Discord Bot TokenとNansen API Keyを設定します。
+
+実際のTokenやAPI KeyはREADME、コード、ログ、Issue、Pull Requestに書かないでください。
+
+### 4. Nansen CLIを準備
+
+Nansen CLIを使う場合は、別途インストールしてログインします。
+
+```powershell
 npm install -g nansen-cli
 nansen --version
 nansen login --human
 ```
 
-## Discord Developer Portal 側の設定
+### 5. Botを起動
 
-Discord Developer Portal で Bot を作成し、Bot の設定画面で次を有効にしてください。
-
-- Message Content Intent
-
-Bot をサーバーへ招待するときは、最低限次の権限が必要です。
-
-- View Channels
-- Send Messages
-- Read Message History
-
-## 起動
-
-```bash
+```powershell
 npm start
 ```
 
-起動に成功すると、ターミナルに次のようなログが出ます。
+起動に成功すると、ターミナルにDiscord Botとしてログインしたことが表示されます。
 
-```text
-Logged in as BotName#0000
+## 開発時の確認
+
+構文チェック:
+
+```powershell
+node --check index.js
+node --check src/formatters.js
+node --check src/review.js
+node --check src/radar.js
+node --check src/discovery.js
+node --check src/nansen.js
+node --check src/storage.js
+node --check src/deepAnalysis.js
+node --check src/elite.js
+node --check src/watchRadar.js
+node --check src/scoring.js
 ```
 
-## コマンド
+READMEだけを変更した場合、通常はNode.jsの構文チェックは不要ですが、コード変更を含む場合は上記を確認します。
 
-| コマンド | 説明 |
-| --- | --- |
-| `!ping` | Bot が起動中か確認します。 |
-| `!help` | 使えるコマンド一覧を Discord の Embed で表示します。 |
-| `!about` | しえすたんが、Nansen のオンチェーンデータを使ってアルトや Smart Money の動きを見守る Bot であることを説明します。 |
-| `!sleep` | お昼寝したいときのかわいい返事を返します。 |
-| `!nansen-test` | Node.js から Nansen CLI の `nansen --version` を実行し、接続できているかを Embed で表示します。 |
-| `!discover solana` | Nansen CLI の Smart Money DEX Trades から、Solana 上で Smart Money が直近で買っている候補を発見します。投資助言ではありません。 |
-| `!discover solana --wide` | Nansen REST API で Smart Money DEX Trades を200件取得し、広めの母数から候補を発見します。投資助言ではありません。 |
-| `!radar solana` | CLI版の G0 Discovery 上位候補を Deep 分析まで通し、統合スコア付きの Early Signal 候補を表示します。投資助言ではありません。 |
-| `!radar solana --wide` | REST API wide版のG0 Discoveryを200件の母数で実行し、上位5件だけをDeep分析に通します。投資助言ではありません。 |
-| `!scan solana` | Nansen CLI の Smart Money netflow を使って、Solana 上の流入候補をスキャンし、簡易スコア付きで上位3件を表示します。投資助言ではありません。 |
-| `!deep solana TOKEN_ADDRESS` | 候補トークンを Flow Intelligence、Token Holders、DEX Trades で深掘りし、4-Gate 形式の分析を表示します。投資助言ではありません。 |
+## 注意事項
 
-## 外部通信
+- このBotは投資助言ではありません
+- 表示されるスコアや分析結果はリサーチ補助です
+- 低MCAPトークンは価格変動が非常に大きいです
+- Smart Moneyが買っていても上がる保証はありません
+- API障害やデータ欠損が起きることがあります
 
-このBotは、コマンドに応じて次の外部サービスへ通信します。
+## セキュリティ
 
-- Nansen CLI: `!nansen-test`、通常版の `!discover solana`、`!radar solana`、`!scan solana`、`!deep solana TOKEN_ADDRESS`
-- Nansen REST API: `!discover solana --wide`、`!radar solana --wide`
-- Dexscreener: Discord Embed 内にチャート確認用リンクを表示します。リンクを開いたときにブラウザから Dexscreener へアクセスします。
+- `.env` はコミットしない
+- API Keyをログに出さない
+- `data/watchlist.json` や `data/sm90d-cache.json` はコミットしない
+- `data/signals.json`、`data/discoveries.json`、`data/radar.json` はコミットしない
+- `C:\Users\tweet\.nansen\config.json` は触らない
 
-Nansen REST API wide mode では、次のエンドポイントを使います。
+## 今後追加したい機能
 
-```text
-POST https://api.nansen.ai/api/v1/smart-money/dex-trades
-```
-
-`NANSEN_API_KEY` は `.env` から読み込み、コードに直書きしません。API Key の値は console に出さないでください。
-
-## 保存されるデータ
-
-スキャンや分析の結果はローカルの `data` フォルダに保存されます。
-
-- `!discover solana` / `!discover solana --wide` の結果: `data/discoveries.json`
-- `!radar solana` / `!radar solana --wide` の結果: `data/radar.json`
-- `!scan solana` の結果: `data/signals.json`
-
-これらはローカルの実行結果なので Git にはコミットしません。
-`data/.gitkeep` だけを置いて、`data` フォルダ自体は Git 管理できるようにしています。
-
-## 注意
-
-しえすたんBotが表示する内容は、オンチェーンデータに基づいた調査補助情報です。
-トークンの購入、売却、保有をすすめるものではありません。
-最終判断は、必ず自分で調べたうえで行ってください。
+- Discordに貼られたCAやDexscreener URLの自動検知
+- コミュニティ全体のWatch人気ランキング
+- Watch開始後の最大上昇率
+- ユーザー別Watch成績
+- ナラティブメモ保存
+- チャンネル別トークン人気
+- シミュレーター機能
+- Exit Logic検証
